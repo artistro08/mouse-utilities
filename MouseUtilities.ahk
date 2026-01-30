@@ -14,13 +14,7 @@ Persistent
 CoordMode("Mouse", "Screen")
 SetTitleMatchMode(2)
 
-; ==============================================================================
-; AUTO-ELEVATION TO ADMINISTRATOR
-; ==============================================================================
-if !A_IsAdmin {
-    try Run("*RunAs `"" A_ScriptFullPath "`"")
-    ExitApp
-}
+
 
 ; ==============================================================================
 ; GLOBAL CONFIGURATION

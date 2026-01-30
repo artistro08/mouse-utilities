@@ -1,2 +1,11 @@
 # Claude Code directory
 .claude/
+
+# Certificates (private keys - never commit)
+certificates/
+*.pfx
+*.cer
+
+# Temporary build files
+build/temp_*
+build/verification-report.txt
