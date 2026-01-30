@@ -65,8 +65,10 @@ if (SAR_ShowTrayIcon != "0") {
 ; ==============================================================================
 try {
     global UR_Apps := IniRead(ConfigFile, "UndoRedo_Settings", "Apps", "")
+    global UR_ModifierPassthrough := IniRead(ConfigFile, "UndoRedo_Settings", "ModifierPassthrough", "")
 } catch as err {
     global UR_Apps := ""
+    global UR_ModifierPassthrough := ""
 }
 
 ; ==============================================================================
@@ -336,6 +338,7 @@ SC_CreateDefaultConfig() {
     IniWrite("false", ConfigFile, "Trackball_Behavior", "blockLeftClick")
 
     IniWrite("", ConfigFile, "UndoRedo_Settings", "Apps")
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "ModifierPassthrough")
 }
 
 ; ==============================================================================
@@ -346,6 +349,10 @@ UR_IsAppActive() {
     ; Returns true if active window matches any app in UR_Apps list
     ; Check both window title and process name
     if (UR_Apps == "")
+        return false
+
+    ; If modifier passthrough is configured and held, return false to use default behavior
+    if (UR_ModifierPassthrough != "" && UR_IsModifierHeld())
         return false
 
     try {
@@ -369,15 +376,27 @@ UR_IsAppActive() {
     return false
 }
 
+UR_IsModifierHeld() {
+    ; Check if any of the configured modifier keys are held
+    Loop Parse, UR_ModifierPassthrough, "," {
+        modifier := Trim(A_LoopField)
+        if (modifier == "")
+            continue
+        if (GetKeyState(modifier, "P"))
+            return true
+    }
+    return false
+}
+
 UR_UndoHandler(ThisHotkey) {
-    if (UR_IsAppActive())
+    if (UR_Apps != "" && UR_IsAppActive())
         Send("^z")
     else
         Send("{XButton1}")
 }
 
 UR_RedoHandler(ThisHotkey) {
-    if (UR_IsAppActive())
+    if (UR_Apps != "" && UR_IsAppActive())
         Send("^y")
     else
         Send("{XButton2}")
