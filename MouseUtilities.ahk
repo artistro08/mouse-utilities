@@ -61,6 +61,15 @@ if (SAR_ShowTrayIcon != "0") {
 }
 
 ; ==============================================================================
+; UNDO REDO - INITIALIZATION
+; ==============================================================================
+try {
+    global UR_Apps := IniRead(ConfigFile, "UndoRedo_Settings", "Apps", "")
+} catch as err {
+    global UR_Apps := ""
+}
+
+; ==============================================================================
 ; SMOOTH TRACKBALL SCROLLING - BACKEND INITIALIZATION
 ; ==============================================================================
 
@@ -166,6 +175,28 @@ if (SAR_TriggerKey != "") {
 }
 
 ; ==============================================================================
+; UNDO REDO - HOTKEY REGISTRATION (STANDALONE)
+; ==============================================================================
+; Register standalone undo/redo hotkeys if the other utilities don't use XButton1/XButton2
+global UR_StandaloneUndo := (SC_TriggerKey != "XButton1")
+global UR_StandaloneRedo := (STS_hotkey1 != "XButton2")
+
+if (UR_Apps != "" && UR_StandaloneUndo) {
+    try {
+        Hotkey("$XButton1", UR_UndoHandler)
+    } catch as err {
+        ; Silently fail if hotkey already registered
+    }
+}
+if (UR_Apps != "" && UR_StandaloneRedo) {
+    try {
+        Hotkey("$XButton2", UR_RedoHandler)
+    } catch as err {
+        ; Silently fail if hotkey already registered
+    }
+}
+
+; ==============================================================================
 ; SMOOTH TRACKBALL SCROLLING - HOTKEY REGISTRATION
 ; ==============================================================================
 
@@ -255,7 +286,11 @@ SC_TriggerHandler(ThisHotkey) {
             Send(SC_TargetHotkey)
             KeyWait(KeyName)
         } else {
-            Send("{" . KeyName . "}")
+            ; Tap detected - check for UndoRedo mapping
+            if (UR_Apps != "" && UR_IsAppActive())
+                Send("^z")
+            else
+                Send("{" . KeyName . "}")
         }
     } else {
         Send(SC_TargetHotkey)
@@ -299,6 +334,53 @@ SC_CreateDefaultConfig() {
     IniWrite("32646", ConfigFile, "Trackball_Cursor", "cursorIcon")
 
     IniWrite("false", ConfigFile, "Trackball_Behavior", "blockLeftClick")
+
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "Apps")
+}
+
+; ==============================================================================
+; UNDO REDO - FUNCTIONS
+; ==============================================================================
+
+UR_IsAppActive() {
+    ; Returns true if active window matches any app in UR_Apps list
+    ; Check both window title and process name
+    if (UR_Apps == "")
+        return false
+
+    try {
+        activeTitle := WinGetTitle("A")
+        activeProcess := WinGetProcessName("A")
+    } catch {
+        return false
+    }
+
+    Loop Parse, UR_Apps, "," {
+        appName := Trim(A_LoopField)
+        if (appName == "")
+            continue
+        ; Check if app name matches window title (partial match)
+        if (InStr(activeTitle, appName))
+            return true
+        ; Check if app name matches process name (partial match)
+        if (InStr(activeProcess, appName))
+            return true
+    }
+    return false
+}
+
+UR_UndoHandler(ThisHotkey) {
+    if (UR_IsAppActive())
+        Send("^z")
+    else
+        Send("{XButton1}")
+}
+
+UR_RedoHandler(ThisHotkey) {
+    if (UR_IsAppActive())
+        Send("^y")
+    else
+        Send("{XButton2}")
 }
 
 ; ==============================================================================
@@ -825,8 +907,13 @@ STS_OneKeyHoldMomentaryUp(_) {
 
     STS_ScrollingDeactivate()
     SetTimer(STS_OneKeyHoldMomentaryTimer, 0)
-    if (STS_oneKeyHoldMomentaryTapped)
-        Send("{" STS_hotkey1 " down}{" STS_hotkey1 " up}")
+    if (STS_oneKeyHoldMomentaryTapped) {
+        ; Tap detected - check for UndoRedo mapping
+        if (UR_Apps != "" && UR_IsAppActive())
+            Send("^y")
+        else
+            Send("{" STS_hotkey1 " down}{" STS_hotkey1 " up}")
+    }
 }
 
 ; TWO_KEY_TAP_TOGGLE MODE
