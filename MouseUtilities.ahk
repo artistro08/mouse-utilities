@@ -1,10 +1,12 @@
 ; ==============================================================================
 ; MouseUtilities.ahk
 ; ==============================================================================
-; A unified AutoHotkey v2 script combining three utilities:
+; A unified AutoHotkey v2 script combining utilities:
 ; 1. ShowCursor - Find your cursor with PowerToys integration
 ; 2. SnippetAndRecord - Tap for screenshot, hold for recording
-; 3. SmoothTrackball - Smooth scrolling with trackball
+; 3. UndoRedo - Mouse button undo/redo for configured apps
+; 4. DraggingUtility - Context-aware mouse button behavior when dragging windows
+; 5. SmoothTrackball - Smooth scrolling with trackball
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -65,6 +67,34 @@ try {
     global UR_Apps := ""
     global UR_ModifierPassthrough := ""
     global UR_AlternativeRedoShortcut := ""
+}
+
+; ==============================================================================
+; DRAGGING UTILITY - INITIALIZATION
+; ==============================================================================
+global DU_TriggerKey := IniRead(ConfigFile, "DraggingUtility_Settings", "TriggerKey", "^F12")
+global DU_DragAction := IniRead(ConfigFile, "DraggingUtility_Settings", "DragAction", "MButton")
+global DU_NonDragAction := IniRead(ConfigFile, "DraggingUtility_Settings", "NonDragAction", "XButton2")
+global DU_IsDragging := false
+
+; Set up drag state detection hook
+DU_SetupDragHook()
+
+DU_SetupDragHook() {
+    static EVENT_SYSTEM_MOVESIZESTART := 0x000A
+    static EVENT_SYSTEM_MOVESIZEEND := 0x000B
+
+    callback := CallbackCreate(DU_DragStateCallback, "F", 7)
+    DllCall("SetWinEventHook", "UInt", EVENT_SYSTEM_MOVESIZESTART, "UInt", EVENT_SYSTEM_MOVESIZEEND,
+        "Ptr", 0, "Ptr", callback, "UInt", 0, "UInt", 0, "UInt", 0x0)
+}
+
+DU_DragStateCallback(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime) {
+    global DU_IsDragging
+    if (event = 0x000A)  ; EVENT_SYSTEM_MOVESIZESTART
+        DU_IsDragging := true
+    else if (event = 0x000B)  ; EVENT_SYSTEM_MOVESIZEEND
+        DU_IsDragging := false
 }
 
 ; ==============================================================================
@@ -173,11 +203,22 @@ if (SAR_TriggerKey != "") {
 }
 
 ; ==============================================================================
+; DRAGGING UTILITY - HOTKEY REGISTRATION
+; ==============================================================================
+if (DU_TriggerKey != "") {
+    try {
+        Hotkey("$" DU_TriggerKey, DU_TriggerHandler)
+    } catch as err {
+        MsgBox("DraggingUtility: Failed to register hotkey '" DU_TriggerKey "': " err.Message)
+    }
+}
+
+; ==============================================================================
 ; UNDO REDO - HOTKEY REGISTRATION (STANDALONE)
 ; ==============================================================================
 ; Register standalone undo/redo hotkeys if the other utilities don't use XButton1/XButton2
 global UR_StandaloneUndo := (SC_TriggerKey != "XButton1")
-global UR_StandaloneRedo := (STS_hotkey1 != "XButton2")
+global UR_StandaloneRedo := true
 
 if (UR_Apps != "" && UR_StandaloneUndo) {
     try {
@@ -304,6 +345,14 @@ SC_CreateDefaultConfig() {
     IniWrite("^+#F10", ConfigFile, "SnippetAndRecord_Settings", "TriggerKey")
     IniWrite("200", ConfigFile, "SnippetAndRecord_Settings", "HoldDuration")
     IniWrite("0", ConfigFile, "SnippetAndRecord_Settings", "ShowTrayIcon")
+
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "Apps")
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "ModifierPassthrough")
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "AlternativeRedoShortcut")
+
+    IniWrite("^F12", ConfigFile, "DraggingUtility_Settings", "TriggerKey")
+    IniWrite("MButton", ConfigFile, "DraggingUtility_Settings", "DragAction")
+    IniWrite("XButton2", ConfigFile, "DraggingUtility_Settings", "NonDragAction")
 
     IniWrite("XButton2", ConfigFile, "Trackball_Hotkeys", "hotkey1")
     IniWrite("MButton", ConfigFile, "Trackball_Hotkeys", "hotkey2")
@@ -441,6 +490,27 @@ SAR_TriggerAction(ThisHotkey) {
     } else {
         Send "#+r"
         KeyWait KeyName
+    }
+}
+
+; ==============================================================================
+; DRAGGING UTILITY - FUNCTIONS
+; ==============================================================================
+
+DU_TriggerHandler(ThisHotkey) {
+    global DU_IsDragging, DU_DragAction, DU_NonDragAction, UR_Apps
+    if (DU_IsDragging) {
+        Send("{" DU_DragAction "}")
+    } else {
+        ; Check for UndoRedo mapping first (redo action since this is forward button)
+        if (UR_Apps != "" && UR_IsAppActive()) {
+            if (UR_UsesAlternativeRedo())
+                Send("^+z")
+            else
+                Send("^y")
+        } else {
+            Send("{" DU_NonDragAction "}")
+        }
     }
 }
 
@@ -947,21 +1017,13 @@ STS_OneKeyHoldMomentaryDown(_) {
 }
 
 STS_OneKeyHoldMomentaryUp(_) {
-    global STS_oneKeyHoldMomentaryFlipFlop, STS_oneKeyHoldMomentaryTapped, UR_Apps
+    global STS_oneKeyHoldMomentaryFlipFlop
     STS_oneKeyHoldMomentaryFlipFlop := false
 
     STS_ScrollingDeactivate()
     SetTimer(STS_OneKeyHoldMomentaryTimer, 0)
-    if (STS_oneKeyHoldMomentaryTapped) {
-        ; Tap detected - check for UndoRedo mapping
-        if (UR_Apps != "" && UR_IsAppActive()) {
-            if (UR_UsesAlternativeRedo())
-                Send("^+z")
-            else
-                Send("^y")
-        } else
-            Send("{" STS_hotkey1 " down}{" STS_hotkey1 " up}")
-    }
+    if (STS_oneKeyHoldMomentaryTapped)
+        Send("{" STS_hotkey1 " down}{" STS_hotkey1 " up}")
 }
 
 ; TWO_KEY_TAP_TOGGLE MODE
