@@ -470,7 +470,7 @@ UR_RedoHandler(ThisHotkey) {
     global UR_Apps
     if (UR_Apps != "" && UR_IsAppActive()) {
         if (UR_UsesAlternativeRedo())
-            Send("^+z")
+            Send("^+{z}")
         else
             Send("^y")
     } else
@@ -505,7 +505,7 @@ DU_TriggerHandler(ThisHotkey) {
         ; Check for UndoRedo mapping first (redo action since this is forward button)
         if (UR_Apps != "" && UR_IsAppActive()) {
             if (UR_UsesAlternativeRedo())
-                Send("^+z")
+                Send("^+{z}")
             else
                 Send("^y")
         } else {
@@ -1022,8 +1022,14 @@ STS_OneKeyHoldMomentaryUp(_) {
 
     STS_ScrollingDeactivate()
     SetTimer(STS_OneKeyHoldMomentaryTimer, 0)
-    if (STS_oneKeyHoldMomentaryTapped)
-        Send("{" STS_hotkey1 " down}{" STS_hotkey1 " up}")
+    if (STS_oneKeyHoldMomentaryTapped) {
+        ; Check if DraggingUtility should handle this button (XButton2)
+        if (STS_hotkey1 = DU_TriggerKey && DU_TriggerKey != "") {
+            DU_TriggerHandler(STS_hotkey1)
+        } else {
+            Send("{" STS_hotkey1 " down}{" STS_hotkey1 " up}")
+        }
+    }
 }
 
 ; TWO_KEY_TAP_TOGGLE MODE
