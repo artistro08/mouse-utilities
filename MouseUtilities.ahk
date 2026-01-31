@@ -60,9 +60,11 @@ if (SAR_ShowTrayIcon != "0") {
 try {
     global UR_Apps := IniRead(ConfigFile, "UndoRedo_Settings", "Apps", "")
     global UR_ModifierPassthrough := IniRead(ConfigFile, "UndoRedo_Settings", "ModifierPassthrough", "")
+    global UR_AlternativeRedoShortcut := IniRead(ConfigFile, "UndoRedo_Settings", "AlternativeRedoShortcut", "")
 } catch as err {
     global UR_Apps := ""
     global UR_ModifierPassthrough := ""
+    global UR_AlternativeRedoShortcut := ""
 }
 
 ; ==============================================================================
@@ -333,6 +335,7 @@ SC_CreateDefaultConfig() {
 
     IniWrite("", ConfigFile, "UndoRedo_Settings", "Apps")
     IniWrite("", ConfigFile, "UndoRedo_Settings", "ModifierPassthrough")
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "AlternativeRedoShortcut")
 }
 
 ; ==============================================================================
@@ -382,6 +385,31 @@ UR_IsModifierHeld() {
     return false
 }
 
+UR_UsesAlternativeRedo() {
+    ; Returns true if active window matches any app in AlternativeRedoShortcut list
+    global UR_AlternativeRedoShortcut
+    if (UR_AlternativeRedoShortcut == "")
+        return false
+
+    try {
+        activeTitle := WinGetTitle("A")
+        activeProcess := WinGetProcessName("A")
+    } catch {
+        return false
+    }
+
+    Loop Parse, UR_AlternativeRedoShortcut, "," {
+        appName := Trim(A_LoopField)
+        if (appName == "")
+            continue
+        if (InStr(activeTitle, appName))
+            return true
+        if (InStr(activeProcess, appName))
+            return true
+    }
+    return false
+}
+
 UR_UndoHandler(ThisHotkey) {
     if (UR_Apps != "" && UR_IsAppActive())
         Send("^z")
@@ -390,9 +418,13 @@ UR_UndoHandler(ThisHotkey) {
 }
 
 UR_RedoHandler(ThisHotkey) {
-    if (UR_Apps != "" && UR_IsAppActive())
-        Send("^y")
-    else
+    global UR_Apps
+    if (UR_Apps != "" && UR_IsAppActive()) {
+        if (UR_UsesAlternativeRedo())
+            Send("^+z")
+        else
+            Send("^y")
+    } else
         Send("{XButton2}")
 }
 
@@ -915,16 +947,19 @@ STS_OneKeyHoldMomentaryDown(_) {
 }
 
 STS_OneKeyHoldMomentaryUp(_) {
-    global STS_oneKeyHoldMomentaryFlipFlop
+    global STS_oneKeyHoldMomentaryFlipFlop, STS_oneKeyHoldMomentaryTapped, UR_Apps
     STS_oneKeyHoldMomentaryFlipFlop := false
 
     STS_ScrollingDeactivate()
     SetTimer(STS_OneKeyHoldMomentaryTimer, 0)
     if (STS_oneKeyHoldMomentaryTapped) {
         ; Tap detected - check for UndoRedo mapping
-        if (UR_Apps != "" && UR_IsAppActive())
-            Send("^y")
-        else
+        if (UR_Apps != "" && UR_IsAppActive()) {
+            if (UR_UsesAlternativeRedo())
+                Send("^+z")
+            else
+                Send("^y")
+        } else
             Send("{" STS_hotkey1 " down}{" STS_hotkey1 " up}")
     }
 }
