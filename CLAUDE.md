@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MouseUtilities is a unified AutoHotkey v2 script combining three mouse/keyboard utilities:
+MouseUtilities is a unified AutoHotkey v2 script combining five mouse/keyboard utilities:
 - **ShowCursor (SC_)** - Triggers PowerToys "Find My Mouse" on key hold
 - **SnippetAndRecord (SAR_)** - Tap for screenshot (Win+Shift+S), hold for screen record (Win+Shift+R)
+- **UndoRedo (UR_)** - Maps mouse buttons to undo/redo shortcuts for configured apps
+- **DraggingUtility (DU_)** - Context-aware mouse button behavior for FancyZones window snapping
 - **SmoothTrackball (STS_)** - Converts trackball movement to smooth scroll wheel input using a low-level mouse hook
 
 ## Running the Script
@@ -30,6 +32,8 @@ All code lives in `MouseUtilities.ahk`. Configuration is externalized to `settin
 Each utility uses a distinct prefix for its functions and global variables:
 - `SC_` - ShowCursor functions
 - `SAR_` - SnippetAndRecord functions
+- `UR_` - UndoRedo functions
+- `DU_` - DraggingUtility functions
 - `STS_` - SmoothTrackball functions (most complex, ~600 lines)
 
 ### SmoothTrackball Internals
@@ -45,7 +49,21 @@ The STS module uses a Windows low-level mouse hook (`SetWindowsHookEx` with `WH_
 Settings are read via `IniRead()` at startup. Each section maps to a utility:
 - `[ShowCursor_Settings]`
 - `[SnippetAndRecord_Settings]`
+- `[UndoRedo_Settings]`
+- `[DraggingUtility_Settings]`
 - `[Trackball_*]` - Multiple sections for SmoothTrackball
+
+### DraggingUtility Settings
+The DraggingUtility is designed for use with PowerToys FancyZones. It detects when you're dragging a window and sends a different mouse button depending on the drag state. This allows you to map your forward mouse button (XButton2) to the trigger, which will:
+- Send middle-click (MButton) when dragging a window - useful for FancyZones zone selection
+- Send forward button (XButton2) normally when not dragging
+
+Configuration in `[DraggingUtility_Settings]`:
+- `TriggerKey` - The hotkey that triggers the utility (default: `^F12`, but map to `XButton2` for FancyZones use)
+- `DragAction` - Mouse button to send when dragging a window (default: `MButton`)
+- `NonDragAction` - Mouse button to send when not dragging (default: `XButton2`)
+
+To use with FancyZones, set `TriggerKey=XButton2` in settings.ini. This makes your forward mouse button act as middle-click only when dragging windows, enabling FancyZones zone snapping while preserving normal forward button behavior otherwise.
 
 ### Hotkey Registration
 Hotkeys are registered dynamically based on config. The `$` prefix prevents self-triggering. STS mode-specific handlers are registered based on the configured `mode` value.
@@ -61,4 +79,4 @@ Hotkeys are registered dynamically based on config. The `$` prefix prevents self
 When adding features or fixing bugs:
 1. Use the appropriate prefix for the utility being modified
 2. Global variables should be declared at the top of the utility's section
-3. Test hotkey conflicts - all three utilities share the keyboard/mouse input space
+3. Test hotkey conflicts - all five utilities share the keyboard/mouse input space

@@ -1,11 +1,13 @@
 # MouseUtilities
 
-A unified AutoHotkey v2 script combining three mouse/keyboard utilities into one.
+A unified AutoHotkey v2 script combining five mouse/keyboard utilities into one.
 
 ## What It Does
 
 - **ShowCursor** - Find your cursor with PowerToys integration (tap vs hold)
 - **SnippetAndRecord** - Take screenshots or record screen (tap vs hold)
+- **UndoRedo** - Map mouse buttons to undo/redo for specific apps
+- **DraggingUtility** - Context-aware mouse button for PowerToys FancyZones
 - **SmoothTrackball** - Smooth scrolling for trackball mice
 
 ## Requirements
@@ -39,10 +41,12 @@ For full PowerToys integration and elevated window support, enable UIAccess:
 
 ## Default Hotkeys
 
-- **XButton1** (Back Mouse) - ShowCursor
+- **XButton1** (Back Mouse) - ShowCursor (hold) / Undo in configured apps (tap)
+- **XButton2** (Forward Mouse) - SmoothTrackball or DraggingUtility / Redo in configured apps
 - **Ctrl+Shift+Win+F10** - SnippetAndRecord
-- **XButton2** (Forward Mouse) - SmoothTrackball
 - **F3** - Exit script
+
+> **Note:** DraggingUtility and SmoothTrackball both use XButton2 by default. Choose one based on your needs, or disable one by clearing its trigger key in settings.ini.
 
 ## Configuration
 
@@ -97,6 +101,40 @@ sensitivity=2.5
 snapOnByDefault=false
 ```
 
+### UndoRedo Settings
+
+Map mouse buttons to Undo/Redo for specific applications:
+
+```ini
+[UndoRedo_Settings]
+; Apps where XButton1=Undo, XButton2=Redo (comma-separated, partial match)
+Apps=Affinity, Photoshop, GIMP
+
+; Hold this modifier to bypass undo/redo and send the original button
+ModifierPassthrough=Ctrl
+
+; Apps that use Ctrl+Shift+Z for redo instead of Ctrl+Y
+AlternativeRedoShortcut=Affinity
+```
+
+### DraggingUtility Settings (FancyZones)
+
+Use your forward mouse button for FancyZones window snapping:
+
+```ini
+[DraggingUtility_Settings]
+; Map forward button to this utility
+TriggerKey=XButton2
+
+; Send middle-click when dragging (FancyZones listens for this)
+DragAction=MButton
+
+; Send forward button normally when not dragging
+NonDragAction=XButton2
+```
+
+This lets you use one button for both FancyZones zone snapping (while dragging windows) and normal forward button behavior (when not dragging).
+
 ## Troubleshooting
 
 **Script won't start:** Install AutoHotkey v2.0+
@@ -111,11 +149,13 @@ snapOnByDefault=false
 
 ## Original Projects
 
-This combines three scripts:
+This combines and extends these scripts:
 
 - [show-cursor](https://github.com/artistro08/show-cursor) by artistro08
 - [snippet-and-record](https://github.com/artistro08/snippet-and-record) by artistro08
 - [Smooth-Trackball-Scrolling](https://github.com/eynsai/Smooth-Trackball-Scrolling) by eynsai
+
+UndoRedo and DraggingUtility are original additions to this unified script.
 
 ## Contributors
 
