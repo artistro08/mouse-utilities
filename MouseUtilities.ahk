@@ -7,6 +7,8 @@
 ; 3. UndoRedo - Mouse button undo/redo for configured apps
 ; 4. DraggingUtility - Context-aware mouse button behavior when dragging windows
 ; 5. SmoothTrackball - Smooth scrolling with trackball
+; 6. CapsLockShift - Remap CapsLock to function as Shift key
+; 7. VolumeControl - Map custom hotkeys to volume up/down
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -95,6 +97,26 @@ DU_DragStateCallback(hWinEventHook, event, hwnd, idObject, idChild, dwEventThrea
         DU_IsDragging := true
     else if (event = 0x000B)  ; EVENT_SYSTEM_MOVESIZEEND
         DU_IsDragging := false
+}
+
+; ==============================================================================
+; CAPSLOCK SHIFT - INITIALIZATION
+; ==============================================================================
+try {
+    global CLS_Enabled := IniRead(ConfigFile, "CapsLockShift_Settings", "Enabled", "0")
+} catch as err {
+    global CLS_Enabled := "0"
+}
+
+; ==============================================================================
+; VOLUME CONTROL - INITIALIZATION
+; ==============================================================================
+try {
+    global VC_VolumeUpKey := IniRead(ConfigFile, "VolumeControl_Settings", "VolumeUpKey", "")
+    global VC_VolumeDownKey := IniRead(ConfigFile, "VolumeControl_Settings", "VolumeDownKey", "")
+} catch as err {
+    global VC_VolumeUpKey := ""
+    global VC_VolumeDownKey := ""
 }
 
 ; ==============================================================================
@@ -232,6 +254,36 @@ if (UR_Apps != "" && UR_StandaloneRedo) {
         Hotkey("$XButton2", UR_RedoHandler)
     } catch as err {
         ; Silently fail if hotkey already registered
+    }
+}
+
+; ==============================================================================
+; CAPSLOCK SHIFT - HOTKEY REGISTRATION
+; ==============================================================================
+if (CLS_Enabled = "1") {
+    try {
+        Hotkey("$CapsLock", CLS_CapsLockDown)
+        Hotkey("$CapsLock Up", CLS_CapsLockUp)
+    } catch as err {
+        MsgBox("CapsLockShift: Failed to register CapsLock hotkey: " err.Message)
+    }
+}
+
+; ==============================================================================
+; VOLUME CONTROL - HOTKEY REGISTRATION
+; ==============================================================================
+if (VC_VolumeUpKey != "") {
+    try {
+        Hotkey("$" VC_VolumeUpKey, VC_VolumeUpHandler)
+    } catch as err {
+        MsgBox("VolumeControl: Failed to register volume up hotkey '" VC_VolumeUpKey "': " err.Message)
+    }
+}
+if (VC_VolumeDownKey != "") {
+    try {
+        Hotkey("$" VC_VolumeDownKey, VC_VolumeDownHandler)
+    } catch as err {
+        MsgBox("VolumeControl: Failed to register volume down hotkey '" VC_VolumeDownKey "': " err.Message)
     }
 }
 
@@ -385,6 +437,11 @@ SC_CreateDefaultConfig() {
     IniWrite("", ConfigFile, "UndoRedo_Settings", "Apps")
     IniWrite("", ConfigFile, "UndoRedo_Settings", "ModifierPassthrough")
     IniWrite("", ConfigFile, "UndoRedo_Settings", "AlternativeRedoShortcut")
+
+    IniWrite("0", ConfigFile, "CapsLockShift_Settings", "Enabled")
+
+    IniWrite("", ConfigFile, "VolumeControl_Settings", "VolumeUpKey")
+    IniWrite("", ConfigFile, "VolumeControl_Settings", "VolumeDownKey")
 }
 
 ; ==============================================================================
@@ -512,6 +569,30 @@ DU_TriggerHandler(ThisHotkey) {
             Send("{" DU_NonDragAction "}")
         }
     }
+}
+
+; ==============================================================================
+; CAPSLOCK SHIFT - FUNCTIONS
+; ==============================================================================
+
+CLS_CapsLockDown(ThisHotkey) {
+    Send("{Shift down}")
+}
+
+CLS_CapsLockUp(ThisHotkey) {
+    Send("{Shift up}")
+}
+
+; ==============================================================================
+; VOLUME CONTROL - FUNCTIONS
+; ==============================================================================
+
+VC_VolumeUpHandler(ThisHotkey) {
+    SoundSetVolume("+1")
+}
+
+VC_VolumeDownHandler(ThisHotkey) {
+    SoundSetVolume("-1")
 }
 
 ; ==============================================================================

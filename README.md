@@ -9,6 +9,8 @@ A unified AutoHotkey v2 script combining five mouse/keyboard utilities into one.
 - **UndoRedo** - Map mouse buttons to undo/redo for specific apps
 - **DraggingUtility** - Context-aware mouse button for PowerToys FancyZones
 - **SmoothTrackball** - Smooth scrolling for trackball mice
+- **CapsLockShift** - Remap CapsLock to act as Shift key (disabled by default)
+- **VolumeControl** - Map custom hotkeys to volume up/down (disabled by default)
 
 ## Requirements
 
@@ -44,6 +46,8 @@ For full PowerToys integration and elevated window support, enable UIAccess:
 - **XButton1** (Back Mouse) - ShowCursor (hold) / Undo in configured apps (tap)
 - **XButton2** (Forward Mouse) - SmoothTrackball or DraggingUtility / Redo in configured apps
 - **Ctrl+Shift+Win+F10** - SnippetAndRecord
+- **CapsLock** (when CapsLockShift enabled) - Acts as Shift key
+- **VolumeControl** - No default hotkeys (set VolumeUpKey/VolumeDownKey to enable)
 - **F3** - Exit script
 
 > **Note:** DraggingUtility and SmoothTrackball both use XButton2 by default. Choose one based on your needs, or disable one by clearing its trigger key in settings.ini.
@@ -134,6 +138,27 @@ NonDragAction=XButton2
 ```
 
 This lets you use one button for both FancyZones zone snapping (while dragging windows) and normal forward button behavior (when not dragging).
+
+### CapsLockShift Settings
+
+Remap CapsLock to function as Shift (disabled by default):
+
+```ini
+[CapsLockShift_Settings]
+; Enable the remapping
+Enabled=1
+```
+
+### VolumeControl Settings
+
+Map custom hotkeys to volume control (both disabled by default - set a key to enable):
+
+```ini
+[VolumeControl_Settings]
+; Set a hotkey to enable, leave empty to disable
+VolumeUpKey=#+F12
+VolumeDownKey=#+F11
+```
 
 ## Troubleshooting
 
