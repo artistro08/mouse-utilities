@@ -25,7 +25,8 @@ $sourceIni = Join-Path $projectRoot "settings.ini"
 $sourceIco = Join-Path $projectRoot "MouseUtilities.ico"
 $targetDir = "C:\Program Files\MouseUtilities"
 $targetExe = Join-Path $targetDir "MouseUtilities.exe"
-$targetIni = Join-Path $targetDir "settings.ini"
+$userConfigDir = Join-Path $env:USERPROFILE ".config\mouse-utilities"
+$targetIni = Join-Path $userConfigDir "settings.ini"
 $targetIco = Join-Path $targetDir "MouseUtilities.ico"
 
 # Check if source executable exists
@@ -105,12 +106,18 @@ try
     Copy-Item -Path $sourceExe -Destination $targetExe -Force
     Write-Host "  ✓ Executable deployed" -ForegroundColor Green
 
-    # Copy settings.ini
+    # Copy settings.ini to user config directory
     if (Test-Path $sourceIni)
     {
-        Write-Host "  Copying settings.ini..." -ForegroundColor Gray
+        # Create user config directory if it doesn't exist
+        if (-not (Test-Path $userConfigDir))
+        {
+            New-Item -ItemType Directory -Path $userConfigDir -Force | Out-Null
+            Write-Host "  Created config directory: $userConfigDir" -ForegroundColor Gray
+        }
+        Write-Host "  Copying settings.ini to user config..." -ForegroundColor Gray
         Copy-Item -Path $sourceIni -Destination $targetIni -Force
-        Write-Host "  ✓ Settings deployed" -ForegroundColor Green
+        Write-Host "  ✓ Settings deployed to: $targetIni" -ForegroundColor Green
     }
 
     # Copy icon
@@ -208,7 +215,7 @@ Write-Host ""
 Write-Host "Files Deployed:" -ForegroundColor White
 Write-Host "  ✓ MouseUtilities.exe (signed with UIAccess)" -ForegroundColor Gray
 if (Test-Path $targetIni)
-{ Write-Host "  ✓ settings.ini" -ForegroundColor Gray
+{ Write-Host "  ✓ settings.ini ($targetIni)" -ForegroundColor Gray
 }
 if (Test-Path $targetIco)
 { Write-Host "  ✓ MouseUtilities.ico" -ForegroundColor Gray

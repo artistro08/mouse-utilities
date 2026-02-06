@@ -23,7 +23,13 @@ SetTitleMatchMode(2)
 ; ==============================================================================
 ; GLOBAL CONFIGURATION
 ; ==============================================================================
-global ConfigFile := "settings.ini"
+; Config file resolution: user directory takes priority, falls back to script directory
+global UserConfigDir := EnvGet("USERPROFILE") "\.config\mouse-utilities"
+global UserConfigFile := UserConfigDir "\settings.ini"
+global LocalConfigFile := A_ScriptDir "\settings.ini"
+
+; Use user config if it exists, otherwise use local config
+global ConfigFile := FileExist(UserConfigFile) ? UserConfigFile : LocalConfigFile
 
 ; Create default config if it doesn't exist
 if !FileExist(ConfigFile) {

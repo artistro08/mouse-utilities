@@ -28,7 +28,7 @@ The script auto-elevates to admin privileges on startup.
 ## Architecture
 
 ### Single-File Design
-All code lives in `MouseUtilities.ahk`. Configuration is externalized to `settings.ini` (auto-created with defaults if missing).
+All code lives in `MouseUtilities.ahk`. Configuration is externalized to `settings.ini`, which can be located in the user config directory or script directory (see Configuration File Location below). A default config is auto-created if missing.
 
 ### Prefix Convention
 Each utility uses a distinct prefix for its functions and global variables:
@@ -48,6 +48,20 @@ The STS module uses a Windows low-level mouse hook (`SetWindowsHookEx` with `WH_
 - **Smoothing Window**: Ring buffer for movement smoothing (`STS_smoothingWindow*` variables)
 - **Axis Snapping**: Locks scrolling to horizontal or vertical axis based on initial direction
 - **Seven Hotkey Modes**: Different activation behaviors (toggle, momentary, tap-toggle, etc.)
+
+### Configuration File Location
+The script looks for `settings.ini` in the following order:
+1. **User config directory**: `%USERPROFILE%\.config\mouse-utilities\settings.ini`
+2. **Script directory**: Same folder as the running script/exe
+
+If neither exists, a default config is created in the script directory. This allows users to opt-in to the user directory by manually moving their config, or by using the deploy script which places it there.
+
+| Scenario | Config Location Used |
+|----------|---------------------|
+| User config exists | `%USERPROFILE%\.config\mouse-utilities\settings.ini` |
+| Only local config exists | Script directory `settings.ini` |
+| Neither exists | Creates default in script directory |
+| After running deploy script | User config directory |
 
 ### Configuration Loading
 Settings are read via `IniRead()` at startup. Each section maps to a utility:
