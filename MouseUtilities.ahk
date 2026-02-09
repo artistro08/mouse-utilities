@@ -131,14 +131,11 @@ try {
 ; ==============================================================================
 try {
     global WKO_Enabled := IniRead(ConfigFile, "WinKeyOverride_Settings", "Enabled", "0")
-    global WKO_TapAction := IniRead(ConfigFile, "WinKeyOverride_Settings", "TapAction", "F13")
-    global WKO_HoldDuration := IniRead(ConfigFile, "WinKeyOverride_Settings", "HoldDuration", "200")
+    global WKO_TapAction := IniRead(ConfigFile, "WinKeyOverride_Settings", "TapAction", "^{Space}")
 } catch as err {
     global WKO_Enabled := "0"
     global WKO_TapAction := "^{Space}"
-    global WKO_HoldDuration := "200"
 }
-global WKO_WasHeld := false
 
 ; ==============================================================================
 ; SMOOTH TRACKBALL SCROLLING - BACKEND INITIALIZATION
@@ -478,7 +475,6 @@ SC_CreateDefaultConfig() {
 
     IniWrite("0", ConfigFile, "WinKeyOverride_Settings", "Enabled")
     IniWrite("^{Space}", ConfigFile, "WinKeyOverride_Settings", "TapAction")
-    IniWrite("200", ConfigFile, "WinKeyOverride_Settings", "HoldDuration")
 }
 
 ; ==============================================================================
@@ -625,25 +621,20 @@ CLS_CapsLockUp(ThisHotkey) {
 ; ==============================================================================
 
 WKO_WinKeyDown(ThisHotkey) {
-    global WKO_HoldDuration, WKO_WasHeld
-    WKO_WasHeld := false
-    TimeoutSec := WKO_HoldDuration / 1000
-    if (KeyWait("LWin", "T" . TimeoutSec) == 0) {
-        ; Held — send real Win key down so Win+X combos work
-        WKO_WasHeld := true
-        Send("{LWin down}")
-    }
-    ; If tapped, handled in WKO_WinKeyUp
+    Send("{LWin down}")
 }
 
 WKO_WinKeyUp(ThisHotkey) {
-    global WKO_TapAction, WKO_WasHeld
-    if (WKO_WasHeld) {
+    global WKO_TapAction
+    if (A_PriorKey = "LWin") {
+        ; Solo press — no other key was pressed while LWin was held
+        ; Send a dummy key to cancel the Start menu, then send TapAction
+        Send("{vkE8}")
         Send("{LWin up}")
-        WKO_WasHeld := false
-    } else {
-        ; Key was released before hold threshold — this is a tap
         Send(WKO_TapAction)
+    } else {
+        ; Another key was pressed — normal Win+X combo, just release
+        Send("{LWin up}")
     }
 }
 

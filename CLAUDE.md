@@ -93,7 +93,8 @@ Hotkeys are registered dynamically based on config. The `$` prefix prevents self
 
 ## Key Behaviors
 
-- **Tap vs Hold Detection**: Used by ShowCursor, SnippetAndRecord, and WinKeyOverride. `KeyWait` with timeout determines if user tapped or held the key.
+- **Tap vs Hold Detection**: Used by ShowCursor and SnippetAndRecord. `KeyWait` with timeout determines if user tapped or held the key.
+- **Solo Key Detection**: Used by WinKeyOverride. Checks `A_PriorKey` on key-up to determine if any other key was pressed while the Win key was held. Solo press sends TapAction; combo press preserves normal Win+X behavior.
 - **Scroll Message Targeting**: STS identifies the window/control under cursor at activation time and posts `WM_MOUSEWHEEL` (0x20A) / `WM_MOUSEHWHEEL` (0x20E) messages directly. Special handling for XAML/UWP windows uses `mouse_event` instead.
 - **Cursor Change**: During STS scroll mode, system cursors are replaced with a configurable icon and restored on deactivation.
 
