@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; MouseUtilities.ahk
 ; ==============================================================================
-; A unified AutoHotkey v2 script combining utilities:
+; A unified AutoHotkey v2 script combining eight utilities:
 ; 1. ShowCursor - Find your cursor with PowerToys integration
 ; 2. SnippetAndRecord - Tap for screenshot, hold for recording
 ; 3. UndoRedo - Mouse button undo/redo for configured apps
@@ -9,6 +9,7 @@
 ; 5. SmoothTrackball - Smooth scrolling with trackball
 ; 6. CapsLockShift - Remap CapsLock to function as Shift key
 ; 7. VolumeControl - Map custom hotkeys to volume up/down
+; 8. WinKeyOverride - Override Win key tap to send custom key
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
@@ -124,6 +125,20 @@ try {
     global VC_VolumeUpKey := ""
     global VC_VolumeDownKey := ""
 }
+
+; ==============================================================================
+; WIN KEY OVERRIDE - INITIALIZATION
+; ==============================================================================
+try {
+    global WKO_Enabled := IniRead(ConfigFile, "WinKeyOverride_Settings", "Enabled", "0")
+    global WKO_TapAction := IniRead(ConfigFile, "WinKeyOverride_Settings", "TapAction", "F13")
+    global WKO_HoldDuration := IniRead(ConfigFile, "WinKeyOverride_Settings", "HoldDuration", "200")
+} catch as err {
+    global WKO_Enabled := "0"
+    global WKO_TapAction := "^{Space}"
+    global WKO_HoldDuration := "200"
+}
+global WKO_WasHeld := false
 
 ; ==============================================================================
 ; SMOOTH TRACKBALL SCROLLING - BACKEND INITIALIZATION
@@ -294,6 +309,18 @@ if (VC_VolumeDownKey != "") {
 }
 
 ; ==============================================================================
+; WIN KEY OVERRIDE - HOTKEY REGISTRATION
+; ==============================================================================
+if (WKO_Enabled = "1") {
+    try {
+        Hotkey("$LWin", WKO_WinKeyDown)
+        Hotkey("$LWin Up", WKO_WinKeyUp)
+    } catch as err {
+        MsgBox("WinKeyOverride: Failed to register LWin hotkey: " err.Message)
+    }
+}
+
+; ==============================================================================
 ; SMOOTH TRACKBALL SCROLLING - HOTKEY REGISTRATION
 ; ==============================================================================
 
@@ -448,6 +475,10 @@ SC_CreateDefaultConfig() {
 
     IniWrite("", ConfigFile, "VolumeControl_Settings", "VolumeUpKey")
     IniWrite("", ConfigFile, "VolumeControl_Settings", "VolumeDownKey")
+
+    IniWrite("0", ConfigFile, "WinKeyOverride_Settings", "Enabled")
+    IniWrite("^{Space}", ConfigFile, "WinKeyOverride_Settings", "TapAction")
+    IniWrite("200", ConfigFile, "WinKeyOverride_Settings", "HoldDuration")
 }
 
 ; ==============================================================================
@@ -587,6 +618,33 @@ CLS_CapsLockDown(ThisHotkey) {
 
 CLS_CapsLockUp(ThisHotkey) {
     Send("{Shift up}")
+}
+
+; ==============================================================================
+; WIN KEY OVERRIDE - FUNCTIONS
+; ==============================================================================
+
+WKO_WinKeyDown(ThisHotkey) {
+    global WKO_HoldDuration, WKO_WasHeld
+    WKO_WasHeld := false
+    TimeoutSec := WKO_HoldDuration / 1000
+    if (KeyWait("LWin", "T" . TimeoutSec) == 0) {
+        ; Held — send real Win key down so Win+X combos work
+        WKO_WasHeld := true
+        Send("{LWin down}")
+    }
+    ; If tapped, handled in WKO_WinKeyUp
+}
+
+WKO_WinKeyUp(ThisHotkey) {
+    global WKO_TapAction, WKO_WasHeld
+    if (WKO_WasHeld) {
+        Send("{LWin up}")
+        WKO_WasHeld := false
+    } else {
+        ; Key was released before hold threshold — this is a tap
+        Send(WKO_TapAction)
+    }
 }
 
 ; ==============================================================================

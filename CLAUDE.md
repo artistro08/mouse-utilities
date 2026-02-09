@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MouseUtilities is a unified AutoHotkey v2 script combining seven mouse/keyboard utilities:
+MouseUtilities is a unified AutoHotkey v2 script combining eight mouse/keyboard utilities:
 - **ShowCursor (SC_)** - Triggers PowerToys "Find My Mouse" on key hold
 - **SnippetAndRecord (SAR_)** - Tap for screenshot (Win+Shift+S), hold for screen record (Win+Shift+R)
 - **UndoRedo (UR_)** - Maps mouse buttons to undo/redo shortcuts for configured apps
@@ -12,6 +12,7 @@ MouseUtilities is a unified AutoHotkey v2 script combining seven mouse/keyboard 
 - **SmoothTrackball (STS_)** - Converts trackball movement to smooth scroll wheel input using a low-level mouse hook
 - **CapsLockShift (CLS_)** - Remaps CapsLock to function as Shift key
 - **VolumeControl (VC_)** - Maps custom hotkeys to volume up/down
+- **WinKeyOverride (WKO_)** - Override Win key tap to send custom key while preserving Win+X combos
 
 ## Running the Script
 
@@ -39,6 +40,7 @@ Each utility uses a distinct prefix for its functions and global variables:
 - `STS_` - SmoothTrackball functions (most complex, ~600 lines)
 - `CLS_` - CapsLockShift functions
 - `VC_` - VolumeControl functions
+- `WKO_` - WinKeyOverride functions
 
 ### SmoothTrackball Internals
 The STS module uses a Windows low-level mouse hook (`SetWindowsHookEx` with `WH_MOUSE_LL`) to intercept mouse movement when scrolling mode is active. Key components:
@@ -71,6 +73,7 @@ Settings are read via `IniRead()` at startup. Each section maps to a utility:
 - `[DraggingUtility_Settings]`
 - `[CapsLockShift_Settings]`
 - `[VolumeControl_Settings]`
+- `[WinKeyOverride_Settings]`
 - `[Trackball_*]` - Multiple sections for SmoothTrackball
 
 ### DraggingUtility Settings
@@ -90,7 +93,7 @@ Hotkeys are registered dynamically based on config. The `$` prefix prevents self
 
 ## Key Behaviors
 
-- **Tap vs Hold Detection**: Used by ShowCursor and SnippetAndRecord. `KeyWait` with timeout determines if user tapped or held the key.
+- **Tap vs Hold Detection**: Used by ShowCursor, SnippetAndRecord, and WinKeyOverride. `KeyWait` with timeout determines if user tapped or held the key.
 - **Scroll Message Targeting**: STS identifies the window/control under cursor at activation time and posts `WM_MOUSEWHEEL` (0x20A) / `WM_MOUSEHWHEEL` (0x20E) messages directly. Special handling for XAML/UWP windows uses `mouse_event` instead.
 - **Cursor Change**: During STS scroll mode, system cursors are replaced with a configurable icon and restored on deactivation.
 
@@ -99,4 +102,4 @@ Hotkeys are registered dynamically based on config. The `$` prefix prevents self
 When adding features or fixing bugs:
 1. Use the appropriate prefix for the utility being modified
 2. Global variables should be declared at the top of the utility's section
-3. Test hotkey conflicts - all seven utilities share the keyboard/mouse input space
+3. Test hotkey conflicts - all eight utilities share the keyboard/mouse input space
