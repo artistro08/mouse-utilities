@@ -713,6 +713,9 @@ STS_ScrollingDeactivate() {
     global STS_active := 0
     SetTimer(STS_TimerScroll, 0)
     SetTimer(STS_TimerWheel, 0)
+    ; Restore cursor position to where it was when scrolling started,
+    ; preventing the cursor from snapping to the accumulated hardware position
+    DllCall("SetCursorPos", "int", STS_cursorXMouseGetPos, "int", STS_cursorYMouseGetPos)
     global STS_cursorWasChanged
     if (STS_cursorWasChanged) {
         STS_SetSystemCursor("")
@@ -764,6 +767,8 @@ STS_MouseHook(nCode, wParam, lParam) {
     if (wParam = 0x0200) {
         deltaX := messageX - STS_cursorX
         deltaY := messageY - STS_cursorY
+        global STS_cursorX := messageX
+        global STS_cursorY := messageY
         global STS_accumulatorX += deltaX
         global STS_accumulatorY += deltaY
         return 1

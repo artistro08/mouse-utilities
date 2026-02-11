@@ -6,6 +6,9 @@ certificates/
 *.pfx
 *.cer
 
+# Build output
+build/*.exe
+
 # Temporary build files
 build/temp_*
 build/verification-report.txt
