@@ -767,8 +767,6 @@ STS_MouseHook(nCode, wParam, lParam) {
     if (wParam = 0x0200) {
         deltaX := messageX - STS_cursorX
         deltaY := messageY - STS_cursorY
-        global STS_cursorX := messageX
-        global STS_cursorY := messageY
         global STS_accumulatorX += deltaX
         global STS_accumulatorY += deltaY
         return 1
