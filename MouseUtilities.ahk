@@ -450,7 +450,10 @@ global GUI_Controls := Map()
 global GUI_DarkBrush := DllCall("CreateSolidBrush", "uint", 0x202020, "ptr")
 global GUI_CtrlBrush := DllCall("CreateSolidBrush", "uint", 0x2b2b2b, "ptr")
 global GUI_BorderBrush := DllCall("CreateSolidBrush", "uint", 0x2C2C2C, "ptr")
+global GUI_TabBrush := DllCall("CreateSolidBrush", "uint", 0x2b2b2b, "ptr")
+global GUI_TabActiveBrush := DllCall("CreateSolidBrush", "uint", 0x202020, "ptr")
 global GUI_AllControls := []
+global GUI_TabHwnd := 0
 
 ; Undocumented uxtheme dark mode APIs (ordinals stable since Win10 1903)
 global GUI_pAllowDarkModeForWindow := 0
@@ -469,6 +472,111 @@ try {
 OnMessage(0x0133, GUI_WM_CTLCOLOREDIT)    ; WM_CTLCOLOREDIT
 OnMessage(0x0134, GUI_WM_CTLCOLOREDIT)    ; WM_CTLCOLORLISTBOX
 OnMessage(0x0138, GUI_WM_CTLCOLORSTATIC)  ; WM_CTLCOLORSTATIC
+OnMessage(0x002B, GUI_WM_DRAWITEM)        ; WM_DRAWITEM for owner-drawn tabs
+
+; --- WM_DRAWITEM handler for owner-drawn tab control ---
+GUI_WM_DRAWITEM(wParam, lParam, msg, hwnd) {
+    if (GUI_MainWindow = "" || hwnd != GUI_MainWindow.Hwnd)
+        return
+
+    ; DRAWITEMSTRUCT layout:
+    ; 0: CtlType (UINT)
+    ; 4: CtlID (UINT)
+    ; 8: itemID (UINT)
+    ; 12: itemAction (UINT)
+    ; 16: itemState (UINT)
+    ; 20: padding on x64
+    ; 24 (or 20 on x86): hwndItem (PTR)
+    ; +PTR: hDC (PTR)
+    ; +PTR: rcItem (RECT - 16 bytes)
+    ; +16: itemData (ULONG_PTR)
+
+    ctlType := NumGet(lParam, 0, "uint")
+    if (ctlType != 101) ; ODT_TAB
+        return
+
+    hwndItemOffset := (A_PtrSize = 8) ? 24 : 20
+    hwndItem := NumGet(lParam, hwndItemOffset, "ptr")
+
+    if (hwndItem != GUI_TabHwnd)
+        return
+
+    itemID := NumGet(lParam, 8, "uint")
+    itemState := NumGet(lParam, 16, "uint")
+    hdc := NumGet(lParam, hwndItemOffset + A_PtrSize, "ptr")
+    rcOffset := hwndItemOffset + A_PtrSize * 2
+
+    rcLeft := NumGet(lParam, rcOffset, "int")
+    rcTop := NumGet(lParam, rcOffset + 4, "int")
+    rcRight := NumGet(lParam, rcOffset + 8, "int")
+    rcBottom := NumGet(lParam, rcOffset + 12, "int")
+
+    isSelected := (itemState & 0x1) ; ODS_SELECTED
+
+    ; Create an expanded RECT buffer to overflow and cover surrounding borders
+    rc := Buffer(16)
+    NumPut("int", rcLeft - 2, rc, 0)
+    NumPut("int", rcTop - 2, rc, 4)
+    NumPut("int", rcRight + 2, rc, 8)
+    NumPut("int", rcBottom + 2, rc, 12)
+
+    ; Fill expanded background with dark color first to cover any white borders
+    DllCall("FillRect", "ptr", hdc, "ptr", rc, "ptr", GUI_DarkBrush)
+
+    ; Now fill the actual tab area
+    tabRc := Buffer(16)
+    NumPut("int", rcLeft, tabRc, 0)
+    NumPut("int", rcTop, tabRc, 4)
+    NumPut("int", rcRight, tabRc, 8)
+    NumPut("int", rcBottom, tabRc, 12)
+
+    ; Fill background - selected tab matches window bg, others slightly lighter
+    if (isSelected)
+        DllCall("FillRect", "ptr", hdc, "ptr", tabRc, "ptr", GUI_TabActiveBrush)
+    else
+        DllCall("FillRect", "ptr", hdc, "ptr", tabRc, "ptr", GUI_TabBrush)
+
+    ; Draw border with dark color (subtle, blends with dark theme)
+    hPen := DllCall("CreatePen", "int", 0, "int", 1, "uint", 0x3C3C3C, "ptr")
+    oldPen := DllCall("SelectObject", "ptr", hdc, "ptr", hPen, "ptr")
+    hNullBrush := DllCall("GetStockObject", "int", 5, "ptr") ; HOLLOW_BRUSH
+    oldBrush := DllCall("SelectObject", "ptr", hdc, "ptr", hNullBrush, "ptr")
+    DllCall("Rectangle", "ptr", hdc, "int", rcLeft, "int", rcTop, "int", rcRight, "int", rcBottom)
+    DllCall("SelectObject", "ptr", hdc, "ptr", oldPen, "ptr")
+    DllCall("SelectObject", "ptr", hdc, "ptr", oldBrush, "ptr")
+    DllCall("DeleteObject", "ptr", hPen)
+
+    ; Get tab text using TCITEM
+    tci := Buffer(A_PtrSize = 8 ? 40 : 28, 0) ; TCITEM structure
+    textBuf := Buffer(256, 0)
+    NumPut("uint", 0x1, tci, 0) ; mask = TCIF_TEXT
+    NumPut("ptr", textBuf.Ptr, tci, A_PtrSize = 8 ? 16 : 12) ; pszText offset
+    NumPut("int", 128, tci, A_PtrSize = 8 ? 24 : 16) ; cchTextMax offset
+    DllCall("SendMessageW", "ptr", GUI_TabHwnd, "uint", 0x133C, "ptr", itemID, "ptr", tci) ; TCM_GETITEMW
+
+    ; Draw text
+    DllCall("SetBkMode", "ptr", hdc, "int", 1) ; TRANSPARENT
+    DllCall("SetTextColor", "ptr", hdc, "uint", 0xE0E0E0)
+
+    ; Get the GUI font and select it
+    hFont := DllCall("SendMessageW", "ptr", GUI_TabHwnd, "uint", 0x0031, "ptr", 0, "ptr", 0, "ptr") ; WM_GETFONT
+    if (hFont)
+        oldFont := DllCall("SelectObject", "ptr", hdc, "ptr", hFont, "ptr")
+
+    ; Center text in the tab
+    textLen := DllCall("lstrlenW", "ptr", textBuf, "int")
+    textRc := Buffer(16)
+    NumPut("int", rcLeft + 2, textRc, 0)
+    NumPut("int", rcTop + 2, textRc, 4)
+    NumPut("int", rcRight - 2, textRc, 8)
+    NumPut("int", rcBottom - 2, textRc, 12)
+    DllCall("DrawTextW", "ptr", hdc, "ptr", textBuf, "int", textLen, "ptr", textRc, "uint", 0x25) ; DT_CENTER | DT_VCENTER | DT_SINGLELINE
+
+    if (hFont)
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldFont, "ptr")
+
+    return true ; Indicate we handled the drawing
+}
 
 GUI_WM_CTLCOLOREDIT(wParam, lParam, msg, hwnd) {
     if (GUI_MainWindow = "" || hwnd != GUI_MainWindow.Hwnd)
@@ -517,6 +625,328 @@ GUI_EditSubclass(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
         DllCall("comctl32\RemoveWindowSubclass", "ptr", hwnd, "ptr", GUI_EditSubclassProc, "uint", 1)
     }
     return DllCall("comctl32\DefSubclassProc", "ptr", hwnd, "uint", uMsg, "ptr", wParam, "ptr", lParam, "ptr")
+}
+
+; --- Subclass for Button controls: custom dark painting ---
+global GUI_ButtonSubclassProc := CallbackCreate(GUI_ButtonSubclass, , 6)
+global GUI_ButtonTracking := Map() ; Track which buttons have mouse tracking enabled
+
+GUI_ButtonSubclass(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+    ; Handle mouse enter - start tracking for hover state
+    if (uMsg = 0x0200) { ; WM_MOUSEMOVE
+        if (!GUI_ButtonTracking.Has(hwnd) || !GUI_ButtonTracking[hwnd]) {
+            ; Start tracking mouse leave
+            tme := Buffer(24, 0)
+            NumPut("uint", 24, tme, 0)        ; cbSize
+            NumPut("uint", 0x02, tme, 4)      ; TME_LEAVE
+            NumPut("ptr", hwnd, tme, 8)       ; hwndTrack
+            DllCall("TrackMouseEvent", "ptr", tme)
+            GUI_ButtonTracking[hwnd] := true
+            DllCall("InvalidateRect", "ptr", hwnd, "ptr", 0, "int", true)
+        }
+    }
+    ; Handle mouse leave - clear hover state
+    if (uMsg = 0x02A3) { ; WM_MOUSELEAVE
+        GUI_ButtonTracking[hwnd] := false
+        DllCall("InvalidateRect", "ptr", hwnd, "ptr", 0, "int", true)
+    }
+    ; Handle mouse button down/up for press state
+    if (uMsg = 0x0201 || uMsg = 0x0202) { ; WM_LBUTTONDOWN or WM_LBUTTONUP
+        DllCall("InvalidateRect", "ptr", hwnd, "ptr", 0, "int", true)
+    }
+    if (uMsg = 0x000F) { ; WM_PAINT
+        ps := Buffer(72)
+        hdc := DllCall("BeginPaint", "ptr", hwnd, "ptr", ps, "ptr")
+        rc := Buffer(16)
+        DllCall("GetClientRect", "ptr", hwnd, "ptr", rc)
+        w := NumGet(rc, 8, "int")
+        h := NumGet(rc, 12, "int")
+        ; Check button state
+        state := DllCall("SendMessageW", "ptr", hwnd, "uint", 0x00F2, "ptr", 0, "ptr", 0) ; BM_GETSTATE
+        isPushed := state & 0x0004 ; BST_PUSHED
+        isHot := GUI_ButtonTracking.Has(hwnd) && GUI_ButtonTracking[hwnd] ; Use our tracking for hover
+        ; Choose colors based on state
+        if (isPushed) {
+            bgColor := 0x404040
+            borderColor := 0x666666
+        } else if (isHot) {
+            bgColor := 0x353535
+            borderColor := 0x505050
+        } else {
+            bgColor := 0x2D2D2D
+            borderColor := 0x454545
+        }
+        ; Fill background
+        hBgBrush := DllCall("CreateSolidBrush", "uint", bgColor, "ptr")
+        DllCall("FillRect", "ptr", hdc, "ptr", rc, "ptr", hBgBrush)
+        DllCall("DeleteObject", "ptr", hBgBrush)
+        ; Draw border
+        hPen := DllCall("CreatePen", "int", 0, "int", 1, "uint", borderColor, "ptr")
+        oldPen := DllCall("SelectObject", "ptr", hdc, "ptr", hPen, "ptr")
+        hNullBrush := DllCall("GetStockObject", "int", 5, "ptr") ; HOLLOW_BRUSH
+        oldBrush := DllCall("SelectObject", "ptr", hdc, "ptr", hNullBrush, "ptr")
+        DllCall("RoundRect", "ptr", hdc, "int", 0, "int", 0, "int", w - 1, "int", h - 1, "int", 4, "int", 4)
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldPen, "ptr")
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldBrush, "ptr")
+        DllCall("DeleteObject", "ptr", hPen)
+        ; Draw text
+        textLen := DllCall("GetWindowTextLengthW", "ptr", hwnd)
+        textBuf := Buffer((textLen + 1) * 2)
+        DllCall("GetWindowTextW", "ptr", hwnd, "ptr", textBuf, "int", textLen + 1)
+        hFont := DllCall("SendMessageW", "ptr", hwnd, "uint", 0x0031, "ptr", 0, "ptr", 0, "ptr") ; WM_GETFONT
+        oldFont := DllCall("SelectObject", "ptr", hdc, "ptr", hFont, "ptr")
+        DllCall("SetBkMode", "ptr", hdc, "int", 1) ; TRANSPARENT
+        DllCall("SetTextColor", "ptr", hdc, "uint", 0xE0E0E0)
+        ; Center text
+        DllCall("DrawTextW", "ptr", hdc, "ptr", textBuf, "int", textLen, "ptr", rc, "uint", 0x25) ; DT_CENTER | DT_VCENTER | DT_SINGLELINE
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldFont, "ptr")
+        DllCall("EndPaint", "ptr", hwnd, "ptr", ps)
+        return 0
+    }
+    if (uMsg = 0x0002) { ; WM_DESTROY
+        if (GUI_ButtonTracking.Has(hwnd))
+            GUI_ButtonTracking.Delete(hwnd)
+        DllCall("comctl32\RemoveWindowSubclass", "ptr", hwnd, "ptr", GUI_ButtonSubclassProc, "uint", 3)
+    }
+    return DllCall("comctl32\DefSubclassProc", "ptr", hwnd, "uint", uMsg, "ptr", wParam, "ptr", lParam, "ptr")
+}
+
+; --- Subclass for Tab controls: custom dark border painting ---
+global GUI_TabSubclassProc := CallbackCreate(GUI_TabSubclass, , 6)
+
+GUI_TabSubclass(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+    ; Handle WM_ERASEBKGND - fill entire client area with dark color
+    if (uMsg = 0x0014) { ; WM_ERASEBKGND
+        hdc := wParam
+        rc := Buffer(16)
+        DllCall("GetClientRect", "ptr", hwnd, "ptr", rc)
+        ; Fill entire area dark - this covers the background behind all tab rows
+        DllCall("FillRect", "ptr", hdc, "ptr", rc, "ptr", GUI_DarkBrush)
+        return 1
+    }
+
+    ; Handle WM_PAINT with double-buffering to eliminate flicker
+    if (uMsg = 0x000F) { ; WM_PAINT
+        ps := Buffer(72, 0)
+        hdcPaint := DllCall("BeginPaint", "ptr", hwnd, "ptr", ps, "ptr")
+
+        rc := Buffer(16)
+        DllCall("GetClientRect", "ptr", hwnd, "ptr", rc)
+        w := NumGet(rc, 8, "int")
+        h := NumGet(rc, 12, "int")
+
+        ; Create off-screen buffer
+        hdcMem := DllCall("CreateCompatibleDC", "ptr", hdcPaint, "ptr")
+        hBitmap := DllCall("CreateCompatibleBitmap", "ptr", hdcPaint, "int", w, "int", h, "ptr")
+        hOldBitmap := DllCall("SelectObject", "ptr", hdcMem, "ptr", hBitmap, "ptr")
+
+        ; Fill buffer with dark background first
+        DllCall("FillRect", "ptr", hdcMem, "ptr", rc, "ptr", GUI_DarkBrush)
+
+        ; Let default draw to our buffer using WM_PRINTCLIENT
+        DllCall("SendMessageW", "ptr", hwnd, "uint", 0x0318, "ptr", hdcMem, "ptr", 0x10) ; WM_PRINTCLIENT, PRF_CLIENT
+
+        ; Use hdcMem for all our painting
+        hdc := hdcMem
+
+        ; Get number of tabs and rows
+        tabCount := DllCall("SendMessageW", "ptr", hwnd, "uint", 0x1304, "ptr", 0, "ptr", 0) ; TCM_GETITEMCOUNT
+        rowCount := DllCall("SendMessageW", "ptr", hwnd, "uint", 0x132C, "ptr", 0, "ptr", 0) ; TCM_GETROWCOUNT
+
+        ; Get the display area (content area inside the tabs)
+        displayRect := Buffer(16)
+        NumPut("int", 0, displayRect, 0)
+        NumPut("int", 0, displayRect, 4)
+        NumPut("int", w, displayRect, 8)
+        NumPut("int", h, displayRect, 12)
+        DllCall("SendMessageW", "ptr", hwnd, "uint", 0x1328, "ptr", 0, "ptr", displayRect) ; TCM_ADJUSTRECT with FALSE
+
+        dispLeft := NumGet(displayRect, 0, "int")
+        dispTop := NumGet(displayRect, 4, "int")
+        dispRight := NumGet(displayRect, 8, "int")
+        dispBottom := NumGet(displayRect, 12, "int")
+
+        hDarkBrush := DllCall("CreateSolidBrush", "uint", 0x202020, "ptr")
+        hBorderPen := DllCall("CreatePen", "int", 0, "int", 1, "uint", 0x3C3C3C, "ptr")
+
+        ; Collect all unique Y coordinates where tabs start/end
+        yCoords := Map()
+        Loop tabCount {
+            idx := A_Index - 1
+            itemRect := Buffer(16)
+            DllCall("SendMessageW", "ptr", hwnd, "uint", 0x130A, "ptr", idx, "ptr", itemRect) ; TCM_GETITEMRECT
+            tabTop := NumGet(itemRect, 4, "int")
+            tabBottom := NumGet(itemRect, 12, "int")
+            yCoords[tabTop] := true
+            yCoords[tabBottom] := true
+        }
+
+        ; Paint a horizontal strip at every Y boundary to cover white lines between rows
+        for y, _ in yCoords {
+            strip := Buffer(16)
+            NumPut("int", 0, strip, 0)
+            NumPut("int", y - 2, strip, 4)
+            NumPut("int", w, strip, 8)
+            NumPut("int", y + 2, strip, 12)
+            DllCall("FillRect", "ptr", hdc, "ptr", strip, "ptr", hDarkBrush)
+        }
+
+        ; Paint vertical strip on the left edge to cover any white border on first/active tab
+        leftStrip := Buffer(16)
+        NumPut("int", 0, leftStrip, 0)
+        NumPut("int", 0, leftStrip, 4)
+        NumPut("int", 4, leftStrip, 8)
+        NumPut("int", dispTop, leftStrip, 12)
+        DllCall("FillRect", "ptr", hdc, "ptr", leftStrip, "ptr", hDarkBrush)
+
+        ; Paint vertical strip on the right edge too
+        rightStrip := Buffer(16)
+        NumPut("int", w - 4, rightStrip, 0)
+        NumPut("int", 0, rightStrip, 4)
+        NumPut("int", w, rightStrip, 8)
+        NumPut("int", dispTop, rightStrip, 12)
+        DllCall("FillRect", "ptr", hdc, "ptr", rightStrip, "ptr", hDarkBrush)
+
+        ; Redraw each tab to restore the content that was painted over
+        Loop tabCount {
+            idx := A_Index - 1
+            itemRect := Buffer(16)
+            DllCall("SendMessageW", "ptr", hwnd, "uint", 0x130A, "ptr", idx, "ptr", itemRect)
+
+            tabLeft := NumGet(itemRect, 0, "int")
+            tabTop := NumGet(itemRect, 4, "int")
+            tabRight := NumGet(itemRect, 8, "int")
+            tabBottom := NumGet(itemRect, 12, "int")
+
+            ; Check if this tab is selected
+            currentTab := DllCall("SendMessageW", "ptr", hwnd, "uint", 0x130B, "ptr", 0, "ptr", 0) ; TCM_GETCURSEL
+            isSelected := (idx = currentTab)
+
+            ; Fill the tab background
+            tabBg := Buffer(16)
+            NumPut("int", tabLeft + 1, tabBg, 0)
+            NumPut("int", tabTop + 1, tabBg, 4)
+            NumPut("int", tabRight - 1, tabBg, 8)
+            NumPut("int", tabBottom - 1, tabBg, 12)
+            if (isSelected)
+                DllCall("FillRect", "ptr", hdc, "ptr", tabBg, "ptr", GUI_TabActiveBrush)
+            else
+                DllCall("FillRect", "ptr", hdc, "ptr", tabBg, "ptr", GUI_TabBrush)
+
+            ; Draw dark border around the tab
+            oldPen := DllCall("SelectObject", "ptr", hdc, "ptr", hBorderPen, "ptr")
+            hNullBrush := DllCall("GetStockObject", "int", 5, "ptr")
+            oldBrush := DllCall("SelectObject", "ptr", hdc, "ptr", hNullBrush, "ptr")
+            DllCall("Rectangle", "ptr", hdc, "int", tabLeft, "int", tabTop, "int", tabRight, "int", tabBottom)
+            DllCall("SelectObject", "ptr", hdc, "ptr", oldPen, "ptr")
+            DllCall("SelectObject", "ptr", hdc, "ptr", oldBrush, "ptr")
+
+            ; Redraw the tab text
+            tci := Buffer(A_PtrSize = 8 ? 40 : 28, 0)
+            textBuf := Buffer(256, 0)
+            NumPut("uint", 0x1, tci, 0) ; mask = TCIF_TEXT
+            NumPut("ptr", textBuf.Ptr, tci, A_PtrSize = 8 ? 16 : 12)
+            NumPut("int", 128, tci, A_PtrSize = 8 ? 24 : 16)
+            DllCall("SendMessageW", "ptr", hwnd, "uint", 0x133C, "ptr", idx, "ptr", tci) ; TCM_GETITEMW
+
+            DllCall("SetBkMode", "ptr", hdc, "int", 1) ; TRANSPARENT
+            DllCall("SetTextColor", "ptr", hdc, "uint", 0xE0E0E0)
+
+            hFont := DllCall("SendMessageW", "ptr", hwnd, "uint", 0x0031, "ptr", 0, "ptr", 0, "ptr") ; WM_GETFONT
+            oldFont := 0
+            if (hFont)
+                oldFont := DllCall("SelectObject", "ptr", hdc, "ptr", hFont, "ptr")
+
+            textLen := DllCall("lstrlenW", "ptr", textBuf, "int")
+            textRc := Buffer(16)
+            NumPut("int", tabLeft + 2, textRc, 0)
+            NumPut("int", tabTop + 2, textRc, 4)
+            NumPut("int", tabRight - 2, textRc, 8)
+            NumPut("int", tabBottom - 2, textRc, 12)
+            DllCall("DrawTextW", "ptr", hdc, "ptr", textBuf, "int", textLen, "ptr", textRc, "uint", 0x25) ; DT_CENTER | DT_VCENTER | DT_SINGLELINE
+
+            if (oldFont)
+                DllCall("SelectObject", "ptr", hdc, "ptr", oldFont, "ptr")
+        }
+
+        ; Fill strip just above content area
+        preContentStrip := Buffer(16)
+        NumPut("int", 0, preContentStrip, 0)
+        NumPut("int", dispTop - 4, preContentStrip, 4)
+        NumPut("int", w, preContentStrip, 8)
+        NumPut("int", dispTop, preContentStrip, 12)
+        DllCall("FillRect", "ptr", hdc, "ptr", preContentStrip, "ptr", hDarkBrush)
+
+        ; Fill borders around content area
+        ; Left border
+        leftBorder := Buffer(16)
+        NumPut("int", 0, leftBorder, 0)
+        NumPut("int", dispTop - 3, leftBorder, 4)
+        NumPut("int", dispLeft, leftBorder, 8)
+        NumPut("int", h, leftBorder, 12)
+        DllCall("FillRect", "ptr", hdc, "ptr", leftBorder, "ptr", hDarkBrush)
+
+        ; Right border
+        rightBorder := Buffer(16)
+        NumPut("int", dispRight, rightBorder, 0)
+        NumPut("int", dispTop - 3, rightBorder, 4)
+        NumPut("int", w, rightBorder, 8)
+        NumPut("int", h, rightBorder, 12)
+        DllCall("FillRect", "ptr", hdc, "ptr", rightBorder, "ptr", hDarkBrush)
+
+        ; Bottom border
+        bottomBorder := Buffer(16)
+        NumPut("int", 0, bottomBorder, 0)
+        NumPut("int", dispBottom, bottomBorder, 4)
+        NumPut("int", w, bottomBorder, 8)
+        NumPut("int", h, bottomBorder, 12)
+        DllCall("FillRect", "ptr", hdc, "ptr", bottomBorder, "ptr", hDarkBrush)
+
+        ; Top border (between tabs and content)
+        topBorder := Buffer(16)
+        NumPut("int", 0, topBorder, 0)
+        NumPut("int", dispTop - 3, topBorder, 4)
+        NumPut("int", w, topBorder, 8)
+        NumPut("int", dispTop, topBorder, 12)
+        DllCall("FillRect", "ptr", hdc, "ptr", topBorder, "ptr", hDarkBrush)
+
+        ; Draw subtle border around content area
+        oldPen := DllCall("SelectObject", "ptr", hdc, "ptr", hBorderPen, "ptr")
+        hNullBrush := DllCall("GetStockObject", "int", 5, "ptr")
+        oldBrush := DllCall("SelectObject", "ptr", hdc, "ptr", hNullBrush, "ptr")
+        DllCall("Rectangle", "ptr", hdc, "int", dispLeft - 1, "int", dispTop - 1, "int", dispRight + 1, "int", dispBottom + 1)
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldPen, "ptr")
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldBrush, "ptr")
+
+        DllCall("DeleteObject", "ptr", hBorderPen)
+        DllCall("DeleteObject", "ptr", hDarkBrush)
+
+        ; Copy buffer to screen
+        DllCall("BitBlt", "ptr", hdcPaint, "int", 0, "int", 0, "int", w, "int", h, "ptr", hdcMem, "int", 0, "int", 0, "uint", 0x00CC0020) ; SRCCOPY
+
+        ; Cleanup
+        DllCall("SelectObject", "ptr", hdcMem, "ptr", hOldBitmap, "ptr")
+        DllCall("DeleteObject", "ptr", hBitmap)
+        DllCall("DeleteDC", "ptr", hdcMem)
+        DllCall("EndPaint", "ptr", hwnd, "ptr", ps)
+        return 0
+    }
+    if (uMsg = 0x0002) { ; WM_DESTROY
+        DllCall("comctl32\RemoveWindowSubclass", "ptr", hwnd, "ptr", GUI_TabSubclassProc, "uint", 4)
+    }
+    return DllCall("comctl32\DefSubclassProc", "ptr", hwnd, "uint", uMsg, "ptr", wParam, "ptr", lParam, "ptr")
+}
+
+; --- Quit function: properly destroy GUI before exiting ---
+GUI_Quit() {
+    global GUI_MainWindow
+    if (GUI_MainWindow != "") {
+        try {
+            GUI_MainWindow.Destroy()
+        }
+        GUI_MainWindow := ""
+    }
+    ExitApp()
 }
 
 ; --- Subclass for GroupBox controls: custom border + text painting ---
@@ -602,7 +1032,7 @@ GUI_ApplyDarkTitle(guiObj) {
 }
 
 GUI_DarkEdit(opts, default := "") {
-    ctrl := GUI_MainWindow.Add("Edit", opts, default)
+    ctrl := GUI_MainWindow.Add("Edit", opts " -E0x200", default) ; Remove WS_EX_CLIENTEDGE
     GUI_SetDarkTheme(ctrl.Hwnd)
     DllCall("comctl32\SetWindowSubclass", "ptr", ctrl.Hwnd, "ptr", GUI_EditSubclassProc, "uint", 1, "ptr", 0)
     GUI_AllControls.Push(ctrl)
@@ -610,7 +1040,7 @@ GUI_DarkEdit(opts, default := "") {
 }
 
 GUI_DarkDDL(opts, items) {
-    ctrl := GUI_MainWindow.Add("DropDownList", opts, items)
+    ctrl := GUI_MainWindow.Add("DropDownList", opts " -E0x200", items) ; Remove WS_EX_CLIENTEDGE
     GUI_SetDarkCFD(ctrl.Hwnd)
     DllCall("comctl32\SetWindowSubclass", "ptr", ctrl.Hwnd, "ptr", GUI_EditSubclassProc, "uint", 1, "ptr", 0)
     GUI_AllControls.Push(ctrl)
@@ -626,13 +1056,17 @@ GUI_DarkCheckbox(opts, label) {
 
 GUI_DarkGroupBox(opts, label) {
     ctrl := GUI_MainWindow.Add("GroupBox", opts, label)
+    ; Disable default theme so our custom paint takes over
+    DllCall("uxtheme\SetWindowTheme", "ptr", ctrl.Hwnd, "ptr", 0, "str", "")
     DllCall("comctl32\SetWindowSubclass", "ptr", ctrl.Hwnd, "ptr", GUI_GroupBoxSubclassProc, "uint", 2, "ptr", 0)
     return ctrl
 }
 
 GUI_DarkButton(opts, label) {
     ctrl := GUI_MainWindow.Add("Button", opts, label)
-    GUI_SetDarkTheme(ctrl.Hwnd)
+    ; Disable default theme and subclass for custom dark painting
+    DllCall("uxtheme\SetWindowTheme", "ptr", ctrl.Hwnd, "ptr", 0, "str", "")
+    DllCall("comctl32\SetWindowSubclass", "ptr", ctrl.Hwnd, "ptr", GUI_ButtonSubclassProc, "uint", 3, "ptr", 0)
     return ctrl
 }
 
@@ -655,9 +1089,14 @@ GUI_ShowSettings() {
     GUI_ApplyDarkTitle(GUI_MainWindow)
     GUI_MainWindow.OnEvent("Close", (*) => GUI_MainWindow.Hide())
 
-    tabs := GUI_MainWindow.Add("Tab3", "x10 y10 w600 h400 vMainTabs",
+    tabs := GUI_MainWindow.Add("Tab3", "x10 y10 w600 h435 vMainTabs",
         ["General", "ShowCursor", "Snippet&&Record", "UndoRedo", "DraggingUtility", "SmoothTrackball", "CapsLockShift", "VolumeControl", "WinKeyOverride"])
-    GUI_SetDarkTheme(tabs.Hwnd)
+    GUI_TabHwnd := tabs.Hwnd
+    ; Add TCS_OWNERDRAWFIXED style (0x2000) for custom drawing tab items
+    DllCall("SetWindowLongPtrW", "ptr", tabs.Hwnd, "int", -16, "ptr",
+        DllCall("GetWindowLongPtrW", "ptr", tabs.Hwnd, "int", -16, "ptr") | 0x2000)
+    DllCall("uxtheme\SetWindowTheme", "ptr", tabs.Hwnd, "str", "DarkMode_Explorer", "ptr", 0)
+    DllCall("comctl32\SetWindowSubclass", "ptr", tabs.Hwnd, "ptr", GUI_TabSubclassProc, "uint", 4, "ptr", 0)
 
     GUI_BuildGeneralTab(tabs)
     GUI_BuildShowCursorTab(tabs)
@@ -670,12 +1109,14 @@ GUI_ShowSettings() {
     GUI_BuildWinKeyOverrideTab(tabs)
 
     tabs.UseTab("")
-    saveBtn := GUI_DarkButton("x195 y420 w120 h35", "Save && Reload")
+    saveBtn := GUI_DarkButton("x150 y455 w120 h35", "Save && Reload")
     saveBtn.OnEvent("Click", (*) => GUI_SaveAndReload())
-    cancelBtn := GUI_DarkButton("x325 y420 w100 h35", "Cancel")
+    cancelBtn := GUI_DarkButton("x280 y455 w100 h35", "Cancel")
     cancelBtn.OnEvent("Click", (*) => GUI_MainWindow.Hide())
+    quitBtn := GUI_DarkButton("x390 y455 w80 h35", "Quit")
+    quitBtn.OnEvent("Click", (*) => GUI_Quit())
 
-    GUI_MainWindow.Show("w620 h470")
+    GUI_MainWindow.Show("w620 h505")
 }
 
 GUI_BuildGeneralTab(tabs) {
