@@ -13,13 +13,28 @@
 ; ==============================================================================
 
 #Requires AutoHotkey v2.0
-#SingleInstance Force
+#SingleInstance Off
 #NoTrayIcon
 Persistent
 CoordMode("Mouse", "Screen")
 SetTitleMatchMode(2)
 
-
+; ==============================================================================
+; RELAUNCH DETECTION
+; ==============================================================================
+; If another instance is already running, tell it to show the Settings GUI, then exit.
+DetectHiddenWindows true
+existingHwnd := WinExist("MouseUtilities_Instance ahk_class AutoHotkeyGUI")
+if (existingHwnd) {
+    PostMessage(0x0464, 0, 0, , "ahk_id " existingHwnd)
+    ExitApp()
+}
+DetectHiddenWindows false
+; Create a hidden window to identify this instance
+global GUI_InstanceWin := Gui(, "MouseUtilities_Instance")
+GUI_InstanceWin.Show("Hide")
+; Listen for the "show GUI" message from new instances
+OnMessage(0x0464, (*) => GUI_ShowSettings())
 
 ; ==============================================================================
 ; GLOBAL CONFIGURATION
@@ -36,6 +51,22 @@ global ConfigFile := FileExist(UserConfigFile) ? UserConfigFile : LocalConfigFil
 if !FileExist(ConfigFile) {
     SC_CreateDefaultConfig()
 }
+
+; ==============================================================================
+; GENERAL SETTINGS & TRAY ICON
+; ==============================================================================
+global GUI_ShowTrayIcon := IniRead(ConfigFile, "General_Settings", "ShowTrayIcon", "1")
+if (GUI_ShowTrayIcon = "1") {
+    A_IconHidden := false
+}
+A_IconTip := "MouseUtilities"
+trayMenu := A_TrayMenu
+trayMenu.Delete()
+trayMenu.Add("Settings", (*) => GUI_ShowSettings())
+trayMenu.Add()
+trayMenu.Add("Reload", (*) => Reload())
+trayMenu.Add("Exit", (*) => ExitApp())
+trayMenu.Default := "Settings"
 
 ; ==============================================================================
 ; SHOW CURSOR - INITIALIZATION
@@ -58,11 +89,6 @@ try {
     global SAR_ShowTrayIcon := IniRead(ConfigFile, "SnippetAndRecord_Settings", "ShowTrayIcon", "0")
 } catch as err {
     MsgBox("Error reading SnippetAndRecord settings from config: " err.Message)
-}
-
-; Handle tray icon visibility
-if (SAR_ShowTrayIcon != "0") {
-    A_IconHidden := false
 }
 
 ; ==============================================================================
@@ -416,6 +442,539 @@ if (STS_mode = "ON_OFF") {
 }
 
 ; ==============================================================================
+; SETTINGS GUI - Win32 API Dark Mode
+; ==============================================================================
+
+global GUI_MainWindow := ""
+global GUI_Controls := Map()
+global GUI_DarkBrush := DllCall("CreateSolidBrush", "uint", 0x202020, "ptr")
+global GUI_CtrlBrush := DllCall("CreateSolidBrush", "uint", 0x2b2b2b, "ptr")
+global GUI_BorderBrush := DllCall("CreateSolidBrush", "uint", 0x2C2C2C, "ptr")
+global GUI_AllControls := []
+
+; Undocumented uxtheme dark mode APIs (ordinals stable since Win10 1903)
+global GUI_pAllowDarkModeForWindow := 0
+try {
+    uxthemeMod := DllCall("GetModuleHandle", "str", "uxtheme", "ptr")
+    pSetPreferredAppMode := DllCall("GetProcAddress", "ptr", uxthemeMod, "ptr", 135, "ptr")
+    if (pSetPreferredAppMode)
+        DllCall(pSetPreferredAppMode, "int", 1) ; AllowDark
+    GUI_pAllowDarkModeForWindow := DllCall("GetProcAddress", "ptr", uxthemeMod, "ptr", 133, "ptr")
+    pFlush := DllCall("GetProcAddress", "ptr", uxthemeMod, "ptr", 136, "ptr")
+    if (pFlush)
+        DllCall(pFlush)
+}
+
+; Win32 color message handlers for dark theming
+OnMessage(0x0133, GUI_WM_CTLCOLOREDIT)    ; WM_CTLCOLOREDIT
+OnMessage(0x0134, GUI_WM_CTLCOLOREDIT)    ; WM_CTLCOLORLISTBOX
+OnMessage(0x0138, GUI_WM_CTLCOLORSTATIC)  ; WM_CTLCOLORSTATIC
+
+GUI_WM_CTLCOLOREDIT(wParam, lParam, msg, hwnd) {
+    if (GUI_MainWindow = "" || hwnd != GUI_MainWindow.Hwnd)
+        return
+    DllCall("SetTextColor", "ptr", wParam, "uint", 0xE0E0E0)
+    DllCall("SetBkColor", "ptr", wParam, "uint", 0x2b2b2b)
+    return GUI_CtrlBrush
+}
+
+GUI_WM_CTLCOLORSTATIC(wParam, lParam, msg, hwnd) {
+    if (GUI_MainWindow = "" || hwnd != GUI_MainWindow.Hwnd)
+        return
+    DllCall("SetTextColor", "ptr", wParam, "uint", 0xE0E0E0)
+    DllCall("SetBkMode", "ptr", wParam, "int", 1) ; TRANSPARENT
+    return GUI_DarkBrush
+}
+
+; --- Subclass for Edit controls: fully custom NC border painting ---
+global GUI_EditSubclassProc := CallbackCreate(GUI_EditSubclass, , 6)
+
+GUI_EditSubclass(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+    if (uMsg = 0x0085) { ; WM_NCPAINT - skip default white border, draw our own
+        hdc := DllCall("GetWindowDC", "ptr", hwnd, "ptr")
+        rc := Buffer(16)
+        DllCall("GetWindowRect", "ptr", hwnd, "ptr", rc)
+        w := NumGet(rc, 8, "int") - NumGet(rc, 0, "int")
+        h := NumGet(rc, 12, "int") - NumGet(rc, 4, "int")
+        ; Fill entire window rect with border color
+        NumPut("int", 0, rc, 0)
+        NumPut("int", 0, rc, 4)
+        NumPut("int", w, rc, 8)
+        NumPut("int", h, rc, 12)
+        DllCall("FillRect", "ptr", hdc, "ptr", rc, "ptr", GUI_BorderBrush)
+        ; Fill client area inset (the NC border is typically 2px from WS_EX_CLIENTEDGE)
+        bw := DllCall("GetSystemMetrics", "int", 45) ; SM_CXEDGE
+        bh := DllCall("GetSystemMetrics", "int", 46) ; SM_CYEDGE
+        NumPut("int", bw, rc, 0)
+        NumPut("int", bh, rc, 4)
+        NumPut("int", w - bw, rc, 8)
+        NumPut("int", h - bh, rc, 12)
+        DllCall("FillRect", "ptr", hdc, "ptr", rc, "ptr", GUI_CtrlBrush)
+        DllCall("ReleaseDC", "ptr", hwnd, "ptr", hdc)
+        return 0
+    }
+    if (uMsg = 0x0002) { ; WM_DESTROY
+        DllCall("comctl32\RemoveWindowSubclass", "ptr", hwnd, "ptr", GUI_EditSubclassProc, "uint", 1)
+    }
+    return DllCall("comctl32\DefSubclassProc", "ptr", hwnd, "uint", uMsg, "ptr", wParam, "ptr", lParam, "ptr")
+}
+
+; --- Subclass for GroupBox controls: custom border + text painting ---
+global GUI_GroupBoxSubclassProc := CallbackCreate(GUI_GroupBoxSubclass, , 6)
+
+GUI_GroupBoxSubclass(hwnd, uMsg, wParam, lParam, uIdSubclass, dwRefData) {
+    if (uMsg = 0x000F) { ; WM_PAINT
+        ps := Buffer(72)
+        hdc := DllCall("BeginPaint", "ptr", hwnd, "ptr", ps, "ptr")
+        rc := Buffer(16)
+        DllCall("GetClientRect", "ptr", hwnd, "ptr", rc)
+        w := NumGet(rc, 8, "int")
+        h := NumGet(rc, 12, "int")
+        ; Get text
+        textLen := DllCall("GetWindowTextLengthW", "ptr", hwnd)
+        textBuf := Buffer((textLen + 1) * 2)
+        DllCall("GetWindowTextW", "ptr", hwnd, "ptr", textBuf, "int", textLen + 1)
+        ; Set font
+        hFont := DllCall("SendMessageW", "ptr", hwnd, "uint", 0x0031, "ptr", 0, "ptr", 0, "ptr") ; WM_GETFONT
+        oldFont := DllCall("SelectObject", "ptr", hdc, "ptr", hFont, "ptr")
+        ; Measure text
+        textSize := Buffer(8)
+        DllCall("GetTextExtentPoint32W", "ptr", hdc, "ptr", textBuf, "int", textLen, "ptr", textSize)
+        textW := NumGet(textSize, 0, "int")
+        textH := NumGet(textSize, 4, "int")
+        ; Clear background
+        DllCall("SetBkMode", "ptr", hdc, "int", 1) ; TRANSPARENT
+        DllCall("FillRect", "ptr", hdc, "ptr", rc, "ptr", GUI_DarkBrush)
+        ; Draw border rectangle (top edge at half text height)
+        borderTop := textH // 2
+        hPen := DllCall("CreatePen", "int", 0, "int", 1, "uint", 0x2C2C2C, "ptr")
+        oldPen := DllCall("SelectObject", "ptr", hdc, "ptr", hPen, "ptr")
+        hNullBrush := DllCall("GetStockObject", "int", 5, "ptr") ; HOLLOW_BRUSH
+        oldBrush := DllCall("SelectObject", "ptr", hdc, "ptr", hNullBrush, "ptr")
+        DllCall("RoundRect", "ptr", hdc, "int", 0, "int", borderTop, "int", w - 1, "int", h - 1, "int", 6, "int", 6)
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldPen, "ptr")
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldBrush, "ptr")
+        DllCall("DeleteObject", "ptr", hPen)
+        ; Draw text label with cleared gap behind it
+        if (textLen > 0) {
+            textLeft := 9
+            clearRc := Buffer(16)
+            NumPut("int", textLeft - 2, clearRc, 0)
+            NumPut("int", 0, clearRc, 4)
+            NumPut("int", textLeft + textW + 2, clearRc, 8)
+            NumPut("int", textH, clearRc, 12)
+            DllCall("FillRect", "ptr", hdc, "ptr", clearRc, "ptr", GUI_DarkBrush)
+            DllCall("SetTextColor", "ptr", hdc, "uint", 0xE0E0E0)
+            DllCall("TextOutW", "ptr", hdc, "int", textLeft, "int", 0, "ptr", textBuf, "int", textLen)
+        }
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldFont, "ptr")
+        DllCall("EndPaint", "ptr", hwnd, "ptr", ps)
+        return 0
+    }
+    if (uMsg = 0x0014) ; WM_ERASEBKGND
+        return 1
+    if (uMsg = 0x0002) { ; WM_DESTROY
+        DllCall("comctl32\RemoveWindowSubclass", "ptr", hwnd, "ptr", GUI_GroupBoxSubclassProc, "uint", 2)
+    }
+    return DllCall("comctl32\DefSubclassProc", "ptr", hwnd, "uint", uMsg, "ptr", wParam, "ptr", lParam, "ptr")
+}
+
+; --- Helpers ---
+GUI_AllowDarkMode(hwnd) {
+    if (GUI_pAllowDarkModeForWindow)
+        DllCall(GUI_pAllowDarkModeForWindow, "ptr", hwnd, "int", true)
+}
+
+GUI_SetDarkTheme(ctrlHwnd) {
+    GUI_AllowDarkMode(ctrlHwnd)
+    DllCall("uxtheme\SetWindowTheme", "ptr", ctrlHwnd, "str", "DarkMode_Explorer", "ptr", 0)
+}
+
+GUI_SetDarkCFD(ctrlHwnd) {
+    GUI_AllowDarkMode(ctrlHwnd)
+    DllCall("uxtheme\SetWindowTheme", "ptr", ctrlHwnd, "str", "DarkMode_CFD", "ptr", 0)
+}
+
+GUI_ApplyDarkTitle(guiObj) {
+    GUI_AllowDarkMode(guiObj.Hwnd)
+    attr := VerCompare(A_OSVersion, "10.0.18985") >= 0 ? 20 : 19
+    DllCall("dwmapi\DwmSetWindowAttribute", "ptr", guiObj.hwnd, "int", attr, "int*", true, "int", 4)
+}
+
+GUI_DarkEdit(opts, default := "") {
+    ctrl := GUI_MainWindow.Add("Edit", opts, default)
+    GUI_SetDarkTheme(ctrl.Hwnd)
+    DllCall("comctl32\SetWindowSubclass", "ptr", ctrl.Hwnd, "ptr", GUI_EditSubclassProc, "uint", 1, "ptr", 0)
+    GUI_AllControls.Push(ctrl)
+    return ctrl
+}
+
+GUI_DarkDDL(opts, items) {
+    ctrl := GUI_MainWindow.Add("DropDownList", opts, items)
+    GUI_SetDarkCFD(ctrl.Hwnd)
+    DllCall("comctl32\SetWindowSubclass", "ptr", ctrl.Hwnd, "ptr", GUI_EditSubclassProc, "uint", 1, "ptr", 0)
+    GUI_AllControls.Push(ctrl)
+    return ctrl
+}
+
+GUI_DarkCheckbox(opts, label) {
+    ctrl := GUI_MainWindow.Add("Checkbox", opts, label)
+    GUI_SetDarkTheme(ctrl.Hwnd)
+    GUI_AllControls.Push(ctrl)
+    return ctrl
+}
+
+GUI_DarkGroupBox(opts, label) {
+    ctrl := GUI_MainWindow.Add("GroupBox", opts, label)
+    DllCall("comctl32\SetWindowSubclass", "ptr", ctrl.Hwnd, "ptr", GUI_GroupBoxSubclassProc, "uint", 2, "ptr", 0)
+    return ctrl
+}
+
+GUI_DarkButton(opts, label) {
+    ctrl := GUI_MainWindow.Add("Button", opts, label)
+    GUI_SetDarkTheme(ctrl.Hwnd)
+    return ctrl
+}
+
+GUI_ShowSettings() {
+    global GUI_MainWindow, GUI_AllControls
+    if (GUI_MainWindow != "") {
+        try {
+            GUI_MainWindow.Show()
+            WinActivate("ahk_id " GUI_MainWindow.Hwnd)
+            return
+        } catch {
+            GUI_MainWindow := ""
+        }
+    }
+
+    GUI_AllControls := []
+    GUI_MainWindow := Gui("+MinSize640x480", "MouseUtilities Settings")
+    GUI_MainWindow.BackColor := "0x202020"
+    GUI_MainWindow.SetFont("s9 cE0E0E0", "Segoe UI")
+    GUI_ApplyDarkTitle(GUI_MainWindow)
+    GUI_MainWindow.OnEvent("Close", (*) => GUI_MainWindow.Hide())
+
+    tabs := GUI_MainWindow.Add("Tab3", "x10 y10 w600 h400 vMainTabs",
+        ["General", "ShowCursor", "Snippet&&Record", "UndoRedo", "DraggingUtility", "SmoothTrackball", "CapsLockShift", "VolumeControl", "WinKeyOverride"])
+    GUI_SetDarkTheme(tabs.Hwnd)
+
+    GUI_BuildGeneralTab(tabs)
+    GUI_BuildShowCursorTab(tabs)
+    GUI_BuildSnippetAndRecordTab(tabs)
+    GUI_BuildUndoRedoTab(tabs)
+    GUI_BuildDraggingUtilityTab(tabs)
+    GUI_BuildSmoothTrackballTab(tabs)
+    GUI_BuildCapsLockShiftTab(tabs)
+    GUI_BuildVolumeControlTab(tabs)
+    GUI_BuildWinKeyOverrideTab(tabs)
+
+    tabs.UseTab("")
+    saveBtn := GUI_DarkButton("x195 y420 w120 h35", "Save && Reload")
+    saveBtn.OnEvent("Click", (*) => GUI_SaveAndReload())
+    cancelBtn := GUI_DarkButton("x325 y420 w100 h35", "Cancel")
+    cancelBtn.OnEvent("Click", (*) => GUI_MainWindow.Hide())
+
+    GUI_MainWindow.Show("w620 h470")
+}
+
+GUI_BuildGeneralTab(tabs) {
+    tabs.UseTab("General")
+
+    GUI_MainWindow.Add("Text", "x30 y65 w200", "Show Tray Icon:")
+    ctrl := GUI_DarkCheckbox("x250 y65 w300", "Enable")
+    ctrl.Value := (GUI_ShowTrayIcon = "1")
+    GUI_Controls["General_ShowTrayIcon"] := ctrl
+
+    GUI_MainWindow.Add("Text", "x30 y105 w560 c0x888888",
+        "When the tray icon is hidden, you can still access settings by relaunching the script.")
+}
+
+GUI_BuildShowCursorTab(tabs) {
+    tabs.UseTab("ShowCursor")
+
+    GUI_MainWindow.Add("Text", "x30 y65 w200", "Mode:")
+    ctrl := GUI_DarkDDL("x250 y62 w300", ["1 - Hold to Show", "2 - Toggle Override"])
+    ctrl.Text := SC_Mode = "2" ? "2 - Toggle Override" : "1 - Hold to Show"
+    GUI_Controls["SC_Mode"] := ctrl
+
+    GUI_MainWindow.Add("Text", "x30 y100 w200", "Trigger Key:")
+    GUI_Controls["SC_TriggerKey"] := GUI_DarkEdit("x250 y97 w300", SC_TriggerKey)
+
+    GUI_MainWindow.Add("Text", "x30 y135 w200", "Target Hotkey:")
+    GUI_Controls["SC_TargetHotkey"] := GUI_DarkEdit("x250 y132 w300", SC_TargetHotkey)
+
+    GUI_MainWindow.Add("Text", "x30 y170 w200", "Hold Duration (ms):")
+    GUI_Controls["SC_HoldDuration"] := GUI_DarkEdit("x250 y167 w300", SC_HoldDuration)
+}
+
+GUI_BuildSnippetAndRecordTab(tabs) {
+    tabs.UseTab("Snippet&&Record")
+
+    GUI_MainWindow.Add("Text", "x30 y65 w200", "Trigger Key:")
+    GUI_Controls["SAR_TriggerKey"] := GUI_DarkEdit("x250 y62 w300", SAR_TriggerKey)
+
+    GUI_MainWindow.Add("Text", "x30 y100 w200", "Hold Duration (ms):")
+    GUI_Controls["SAR_HoldDuration"] := GUI_DarkEdit("x250 y97 w300", SAR_HoldDuration)
+}
+
+GUI_BuildUndoRedoTab(tabs) {
+    tabs.UseTab("UndoRedo")
+
+    GUI_MainWindow.Add("Text", "x30 y65 w200", "Apps (comma-separated):")
+    GUI_Controls["UR_Apps"] := GUI_DarkEdit("x250 y62 w300", UR_Apps)
+
+    GUI_MainWindow.Add("Text", "x30 y100 w200", "Modifier Passthrough:")
+    GUI_Controls["UR_ModifierPassthrough"] := GUI_DarkEdit("x250 y97 w300", UR_ModifierPassthrough)
+
+    GUI_MainWindow.Add("Text", "x30 y135 w200", "Alt. Redo Shortcut Apps:")
+    GUI_Controls["UR_AlternativeRedoShortcut"] := GUI_DarkEdit("x250 y132 w300", UR_AlternativeRedoShortcut)
+
+    GUI_MainWindow.Add("Text", "x30 y170 w200", "Additional Undo Key:")
+    GUI_Controls["UR_AdditionalUndoKey"] := GUI_DarkEdit("x250 y167 w300", UR_AdditionalUndoKey)
+
+    GUI_MainWindow.Add("Text", "x30 y205 w200", "Additional Redo Key:")
+    GUI_Controls["UR_AdditionalRedoKey"] := GUI_DarkEdit("x250 y202 w300", UR_AdditionalRedoKey)
+}
+
+GUI_BuildDraggingUtilityTab(tabs) {
+    tabs.UseTab("DraggingUtility")
+
+    GUI_MainWindow.Add("Text", "x30 y65 w200", "Trigger Key:")
+    GUI_Controls["DU_TriggerKey"] := GUI_DarkEdit("x250 y62 w300", DU_TriggerKey)
+
+    GUI_MainWindow.Add("Text", "x30 y100 w200", "Drag Action:")
+    GUI_Controls["DU_DragAction"] := GUI_DarkEdit("x250 y97 w300", DU_DragAction)
+
+    GUI_MainWindow.Add("Text", "x30 y135 w200", "Non-Drag Action:")
+    GUI_Controls["DU_NonDragAction"] := GUI_DarkEdit("x250 y132 w300", DU_NonDragAction)
+}
+
+GUI_BuildSmoothTrackballTab(tabs) {
+    tabs.UseTab("SmoothTrackball")
+
+    ; Re-read values from INI for settings that aren't global
+    local ini_hotkey1 := IniRead(ConfigFile, "Trackball_Hotkeys", "hotkey1", "XButton2")
+    local ini_hotkey2 := IniRead(ConfigFile, "Trackball_Hotkeys", "hotkey2", "")
+    local ini_stopKey := IniRead(ConfigFile, "Trackball_Hotkeys", "stopKey", "")
+    local ini_panicButton := IniRead(ConfigFile, "Trackball_Hotkeys", "panicButton", "")
+    local ini_mode := IniRead(ConfigFile, "Trackball_Hotkeys", "mode", "ONE_KEY_HOLD_MOMENTARY")
+    local ini_holdDuration := IniRead(ConfigFile, "Trackball_Hotkeys", "holdDuration", "200")
+    local ini_accelBlend := IniRead(ConfigFile, "Trackball_Acceleration", "accelerationBlend", "0.872116")
+    local ini_accelScale := IniRead(ConfigFile, "Trackball_Acceleration", "accelerationScale", "500")
+
+    ; --- Hotkeys GroupBox ---
+    GUI_DarkGroupBox("x20 y55 w270 h225", "Hotkeys")
+
+    GUI_MainWindow.Add("Text", "x30 y78 w100", "Hotkey 1:")
+    GUI_Controls["STS_hotkey1"] := GUI_DarkEdit("x130 y75 w150", ini_hotkey1)
+
+    GUI_MainWindow.Add("Text", "x30 y108 w100", "Hotkey 2:")
+    GUI_Controls["STS_hotkey2"] := GUI_DarkEdit("x130 y105 w150", ini_hotkey2)
+
+    GUI_MainWindow.Add("Text", "x30 y138 w100", "Stop Key:")
+    GUI_Controls["STS_stopKey"] := GUI_DarkEdit("x130 y135 w150", ini_stopKey)
+
+    GUI_MainWindow.Add("Text", "x30 y168 w100", "Panic Button:")
+    GUI_Controls["STS_panicButton"] := GUI_DarkEdit("x130 y165 w150", ini_panicButton)
+
+    GUI_MainWindow.Add("Text", "x30 y198 w100", "Mode:")
+    modeList := ["ON_OFF", "ONE_KEY_TOGGLE", "ONE_KEY_MOMENTARY", "ONE_KEY_TAP_TOGGLE", "ONE_KEY_HOLD_TOGGLE", "ONE_KEY_HOLD_MOMENTARY", "TWO_KEY_TAP_TOGGLE"]
+    ctrl := GUI_DarkDDL("x130 y195 w150", modeList)
+    ctrl.Text := ini_mode
+    GUI_Controls["STS_mode"] := ctrl
+
+    GUI_MainWindow.Add("Text", "x30 y230 w100", "Hold Duration:")
+    GUI_Controls["STS_holdDuration"] := GUI_DarkEdit("x130 y227 w150", ini_holdDuration)
+
+    ; --- Texture GroupBox ---
+    GUI_DarkGroupBox("x300 y55 w290 h115", "Texture")
+
+    GUI_MainWindow.Add("Text", "x310 y78 w130", "Sensitivity:")
+    GUI_Controls["STS_sensitivity"] := GUI_DarkEdit("x440 y75 w140", STS_sensitivity)
+
+    GUI_MainWindow.Add("Text", "x310 y108 w130", "Refresh Interval:")
+    GUI_Controls["STS_refreshInterval"] := GUI_DarkEdit("x440 y105 w140", STS_refreshInterval)
+
+    GUI_MainWindow.Add("Text", "x310 y138 w130", "Smoothing Window:")
+    GUI_Controls["STS_smoothingWindowMaxSize"] := GUI_DarkEdit("x440 y135 w140", STS_smoothingWindowMaxSize)
+
+    ; --- Axis Snapping GroupBox ---
+    GUI_DarkGroupBox("x300 y175 w290 h145", "Axis Snapping")
+
+    ctrl := GUI_DarkCheckbox("x310 y198 w200", "Snap On By Default")
+    ctrl.Value := STS_snapOn
+    GUI_Controls["STS_snapOnByDefault"] := ctrl
+
+    GUI_MainWindow.Add("Text", "x310 y223 w130", "Snap Ratio:")
+    GUI_Controls["STS_snapRatio"] := GUI_DarkEdit("x440 y220 w140", STS_snapRatio)
+
+    GUI_MainWindow.Add("Text", "x310 y253 w130", "Snap Threshold:")
+    GUI_Controls["STS_snapThreshold"] := GUI_DarkEdit("x440 y250 w140", STS_snapThreshold)
+
+    GUI_MainWindow.Add("Text", "x310 y283 w130", "Disable Snap For:")
+    GUI_Controls["STS_disableSnapFor"] := GUI_DarkEdit("x440 y280 w140", STS_disableSnapFor)
+
+    ; --- Acceleration GroupBox ---
+    GUI_DarkGroupBox("x20 y285 w270 h105", "Acceleration")
+
+    ctrl := GUI_DarkCheckbox("x30 y305 w200", "Acceleration On")
+    ctrl.Value := STS_accelerationOn
+    GUI_Controls["STS_accelerationOn"] := ctrl
+
+    GUI_MainWindow.Add("Text", "x30 y330 w100", "Blend:")
+    GUI_Controls["STS_accelerationBlend"] := GUI_DarkEdit("x130 y327 w150", ini_accelBlend)
+
+    GUI_MainWindow.Add("Text", "x30 y360 w100", "Scale:")
+    GUI_Controls["STS_accelerationScale"] := GUI_DarkEdit("x130 y357 w150", ini_accelScale)
+
+    ; --- Modifier Emulation ---
+    GUI_DarkGroupBox("x300 y325 w290 h60", "Modifier Emulation")
+
+    ctrl := GUI_DarkCheckbox("x310 y345 w80", "Shift")
+    ctrl.Value := STS_addShift
+    GUI_Controls["STS_addShift"] := ctrl
+
+    ctrl := GUI_DarkCheckbox("x395 y345 w70", "Ctrl")
+    ctrl.Value := STS_addCtrl
+    GUI_Controls["STS_addCtrl"] := ctrl
+
+    ctrl := GUI_DarkCheckbox("x470 y345 w70", "Alt")
+    ctrl.Value := STS_addAlt
+    GUI_Controls["STS_addAlt"] := ctrl
+
+    ; --- Cursor & Behavior ---
+    GUI_MainWindow.Add("Text", "x30 y398 w100", "Cursor Icon:")
+    cursorChoices := ["0 - Disabled", "32512 - Arrow", "32513 - I-Beam", "32514 - Wait", "32515 - Cross", "32516 - Up Arrow", "32642 - Size NW-SE", "32643 - Size NE-SW", "32644 - Size W-E", "32645 - Size N-S", "32646 - Size All", "32648 - No", "32649 - Hand", "32650 - App Starting", "32651 - Help"]
+    ctrl := GUI_DarkDDL("x130 y395 w165", cursorChoices)
+    cursorVal := String(STS_cursorIcon)
+    for item in cursorChoices {
+        if (SubStr(item, 1, StrLen(cursorVal)) = cursorVal) {
+            ctrl.Text := item
+            break
+        }
+    }
+    GUI_Controls["STS_cursorIcon"] := ctrl
+
+    ctrl := GUI_DarkCheckbox("x310 y398 w250", "Block Left Click While Scrolling")
+    ctrl.Value := STS_blockLeftClick
+    GUI_Controls["STS_blockLeftClick"] := ctrl
+}
+
+GUI_BuildCapsLockShiftTab(tabs) {
+    tabs.UseTab("CapsLockShift")
+
+    ctrl := GUI_DarkCheckbox("x30 y65 w300", "Enable CapsLock as Shift")
+    ctrl.Value := (CLS_Enabled = "1")
+    GUI_Controls["CLS_Enabled"] := ctrl
+}
+
+GUI_BuildVolumeControlTab(tabs) {
+    tabs.UseTab("VolumeControl")
+
+    GUI_MainWindow.Add("Text", "x30 y65 w200", "Volume Up Key:")
+    GUI_Controls["VC_VolumeUpKey"] := GUI_DarkEdit("x250 y62 w300", VC_VolumeUpKey)
+
+    GUI_MainWindow.Add("Text", "x30 y100 w200", "Volume Down Key:")
+    GUI_Controls["VC_VolumeDownKey"] := GUI_DarkEdit("x250 y97 w300", VC_VolumeDownKey)
+}
+
+GUI_BuildWinKeyOverrideTab(tabs) {
+    tabs.UseTab("WinKeyOverride")
+
+    ctrl := GUI_DarkCheckbox("x30 y65 w300", "Enable Win Key Override")
+    ctrl.Value := (WKO_Enabled = "1")
+    GUI_Controls["WKO_Enabled"] := ctrl
+
+    GUI_MainWindow.Add("Text", "x30 y100 w200", "Tap Action:")
+    GUI_Controls["WKO_TapAction"] := GUI_DarkEdit("x250 y97 w300", WKO_TapAction)
+}
+
+GUI_SaveAndReload() {
+    global ConfigFile, GUI_MainWindow, GUI_Controls
+
+    ; General Settings
+    IniWrite(GUI_Controls["General_ShowTrayIcon"].Value ? "1" : "0", ConfigFile, "General_Settings", "ShowTrayIcon")
+
+    ; ShowCursor Settings
+    modeText := GUI_Controls["SC_Mode"].Text
+    IniWrite(SubStr(modeText, 1, 1), ConfigFile, "ShowCursor_Settings", "Mode")
+    IniWrite(GUI_Controls["SC_TriggerKey"].Value, ConfigFile, "ShowCursor_Settings", "TriggerKey")
+    IniWrite(GUI_Controls["SC_TargetHotkey"].Value, ConfigFile, "ShowCursor_Settings", "TargetHotkey")
+    IniWrite(GUI_Controls["SC_HoldDuration"].Value, ConfigFile, "ShowCursor_Settings", "HoldDuration")
+
+    ; SnippetAndRecord Settings
+    IniWrite(GUI_Controls["SAR_TriggerKey"].Value, ConfigFile, "SnippetAndRecord_Settings", "TriggerKey")
+    IniWrite(GUI_Controls["SAR_HoldDuration"].Value, ConfigFile, "SnippetAndRecord_Settings", "HoldDuration")
+
+    ; UndoRedo Settings
+    IniWrite(GUI_Controls["UR_Apps"].Value, ConfigFile, "UndoRedo_Settings", "Apps")
+    IniWrite(GUI_Controls["UR_ModifierPassthrough"].Value, ConfigFile, "UndoRedo_Settings", "ModifierPassthrough")
+    IniWrite(GUI_Controls["UR_AlternativeRedoShortcut"].Value, ConfigFile, "UndoRedo_Settings", "AlternativeRedoShortcut")
+    IniWrite(GUI_Controls["UR_AdditionalUndoKey"].Value, ConfigFile, "UndoRedo_Settings", "AdditionalUndoKey")
+    IniWrite(GUI_Controls["UR_AdditionalRedoKey"].Value, ConfigFile, "UndoRedo_Settings", "AdditionalRedoKey")
+
+    ; DraggingUtility Settings
+    IniWrite(GUI_Controls["DU_TriggerKey"].Value, ConfigFile, "DraggingUtility_Settings", "TriggerKey")
+    IniWrite(GUI_Controls["DU_DragAction"].Value, ConfigFile, "DraggingUtility_Settings", "DragAction")
+    IniWrite(GUI_Controls["DU_NonDragAction"].Value, ConfigFile, "DraggingUtility_Settings", "NonDragAction")
+
+    ; SmoothTrackball - Hotkeys
+    IniWrite(GUI_Controls["STS_hotkey1"].Value, ConfigFile, "Trackball_Hotkeys", "hotkey1")
+    IniWrite(GUI_Controls["STS_hotkey2"].Value, ConfigFile, "Trackball_Hotkeys", "hotkey2")
+    IniWrite(GUI_Controls["STS_stopKey"].Value, ConfigFile, "Trackball_Hotkeys", "stopKey")
+    IniWrite(GUI_Controls["STS_panicButton"].Value, ConfigFile, "Trackball_Hotkeys", "panicButton")
+    IniWrite(GUI_Controls["STS_mode"].Text, ConfigFile, "Trackball_Hotkeys", "mode")
+    IniWrite(GUI_Controls["STS_holdDuration"].Value, ConfigFile, "Trackball_Hotkeys", "holdDuration")
+
+    ; SmoothTrackball - Texture
+    IniWrite(GUI_Controls["STS_sensitivity"].Value, ConfigFile, "Trackball_Texture", "sensitivity")
+    IniWrite(GUI_Controls["STS_refreshInterval"].Value, ConfigFile, "Trackball_Texture", "refreshInterval")
+    IniWrite(GUI_Controls["STS_smoothingWindowMaxSize"].Value, ConfigFile, "Trackball_Texture", "smoothingWindowMaxSize")
+
+    ; SmoothTrackball - Axis Snapping
+    IniWrite(GUI_Controls["STS_snapOnByDefault"].Value ? "true" : "false", ConfigFile, "Trackball_AxisSnapping", "snapOnByDefault")
+    IniWrite(GUI_Controls["STS_snapRatio"].Value, ConfigFile, "Trackball_AxisSnapping", "snapRatio")
+    IniWrite(GUI_Controls["STS_snapThreshold"].Value, ConfigFile, "Trackball_AxisSnapping", "snapThreshold")
+    IniWrite(GUI_Controls["STS_disableSnapFor"].Value, ConfigFile, "Trackball_AxisSnapping", "disableSnapFor")
+
+    ; SmoothTrackball - Acceleration
+    IniWrite(GUI_Controls["STS_accelerationOn"].Value ? "true" : "false", ConfigFile, "Trackball_Acceleration", "accelerationOn")
+    IniWrite(GUI_Controls["STS_accelerationBlend"].Value, ConfigFile, "Trackball_Acceleration", "accelerationBlend")
+    IniWrite(GUI_Controls["STS_accelerationScale"].Value, ConfigFile, "Trackball_Acceleration", "accelerationScale")
+
+    ; SmoothTrackball - Modifier Emulation
+    IniWrite(GUI_Controls["STS_addShift"].Value ? "true" : "false", ConfigFile, "Trackball_ModifierEmulation", "addShift")
+    IniWrite(GUI_Controls["STS_addCtrl"].Value ? "true" : "false", ConfigFile, "Trackball_ModifierEmulation", "addCtrl")
+    IniWrite(GUI_Controls["STS_addAlt"].Value ? "true" : "false", ConfigFile, "Trackball_ModifierEmulation", "addAlt")
+
+    ; SmoothTrackball - Cursor
+    cursorText := GUI_Controls["STS_cursorIcon"].Text
+    cursorCode := RegExReplace(cursorText, " -.*$", "")
+    IniWrite(cursorCode, ConfigFile, "Trackball_Cursor", "cursorIcon")
+
+    ; SmoothTrackball - Behavior
+    IniWrite(GUI_Controls["STS_blockLeftClick"].Value ? "true" : "false", ConfigFile, "Trackball_Behavior", "blockLeftClick")
+
+    ; CapsLockShift Settings
+    IniWrite(GUI_Controls["CLS_Enabled"].Value ? "1" : "0", ConfigFile, "CapsLockShift_Settings", "Enabled")
+
+    ; VolumeControl Settings
+    IniWrite(GUI_Controls["VC_VolumeUpKey"].Value, ConfigFile, "VolumeControl_Settings", "VolumeUpKey")
+    IniWrite(GUI_Controls["VC_VolumeDownKey"].Value, ConfigFile, "VolumeControl_Settings", "VolumeDownKey")
+
+    ; WinKeyOverride Settings
+    IniWrite(GUI_Controls["WKO_Enabled"].Value ? "1" : "0", ConfigFile, "WinKeyOverride_Settings", "Enabled")
+    IniWrite(GUI_Controls["WKO_TapAction"].Value, ConfigFile, "WinKeyOverride_Settings", "TapAction")
+
+    ; Destroy the instance detection window before reload
+    global GUI_InstanceWin
+    try GUI_InstanceWin.Destroy()
+
+    Reload()
+}
+
+; ==============================================================================
 ; SHOW CURSOR - FUNCTIONS
 ; ==============================================================================
 
@@ -442,6 +1001,8 @@ SC_TriggerHandler(ThisHotkey) {
 }
 
 SC_CreateDefaultConfig() {
+    IniWrite("1", ConfigFile, "General_Settings", "ShowTrayIcon")
+
     IniWrite("1", ConfigFile, "ShowCursor_Settings", "Mode")
     IniWrite("XButton1", ConfigFile, "ShowCursor_Settings", "TriggerKey")
     IniWrite("#+F", ConfigFile, "ShowCursor_Settings", "TargetHotkey")
