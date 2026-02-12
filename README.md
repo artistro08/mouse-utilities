@@ -1,6 +1,8 @@
 # MouseUtilities
 
-A unified AutoHotkey v2 script combining five mouse/keyboard utilities into one.
+A unified AutoHotkey v2 script combining eight mouse/keyboard utilities into one, with a built-in Settings GUI for easy configuration.
+
+![MouseUtilities Settings GUI](screenshot.png)
 
 ## What It Does
 
@@ -11,6 +13,7 @@ A unified AutoHotkey v2 script combining five mouse/keyboard utilities into one.
 - **SmoothTrackball** - Smooth scrolling for trackball mice
 - **CapsLockShift** - Remap CapsLock to act as Shift key (disabled by default)
 - **VolumeControl** - Map custom hotkeys to volume up/down (disabled by default)
+- **WinKeyOverride** - Override Win key tap to send custom key while preserving Win+X combos
 
 ## Requirements
 
@@ -54,7 +57,18 @@ For full PowerToys integration and elevated window support, enable UIAccess:
 
 ## Configuration
 
-All settings are in `settings.ini`. The file has detailed comments for each option.
+### Settings GUI
+
+MouseUtilities includes a dark-themed Settings GUI for easy configuration:
+
+- **Right-click the system tray icon** → Select "Settings"
+- Or **run the script again** while it's already running to open Settings
+
+The GUI provides tabs for each utility where you can modify all settings without editing files manually. Changes are saved to `settings.ini` and take effect after clicking Save (which reloads the script).
+
+### Manual Configuration
+
+All settings are also available in `settings.ini`. The file has detailed comments for each option.
 
 ### Quick Settings
 

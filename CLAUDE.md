@@ -91,6 +91,21 @@ To use with FancyZones, set `TriggerKey=XButton2` in settings.ini. This makes yo
 ### Hotkey Registration
 Hotkeys are registered dynamically based on config. The `$` prefix prevents self-triggering. STS mode-specific handlers are registered based on the configured `mode` value.
 
+### Settings GUI
+The script includes a dark-themed Settings GUI (`GUI_` prefix) for configuring all utilities:
+
+- **Access**: Right-click tray icon → "Settings", or relaunch the script while running
+- **Single Instance**: Uses a hidden window (`MouseUtilities_Instance`) and `PostMessage` to show GUI from duplicate launches
+- **Dark Mode**: Uses undocumented Windows `uxtheme` APIs (ordinals 133, 135, 136) for dark title bar and custom `WM_CTLCOLOR*` handlers for control theming
+- **Tabs**: Each utility has its own tab built by `GUI_Build*Tab()` functions
+- **Custom Controls**: Owner-drawn tabs (`WM_DRAWITEM`), subclassed Edit controls for border painting, subclassed Buttons for hover states
+- **Save Behavior**: Writes all settings to `settings.ini` and reloads the script
+
+Key GUI globals:
+- `GUI_MainWindow` - Main settings window
+- `GUI_Controls` - Map of control names to control objects
+- `GUI_*Brush` - GDI brush handles for dark theme colors
+
 ## Key Behaviors
 
 - **Tap vs Hold Detection**: Used by ShowCursor and SnippetAndRecord. `KeyWait` with timeout determines if user tapped or held the key.
