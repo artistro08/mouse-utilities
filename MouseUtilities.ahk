@@ -65,7 +65,7 @@ trayMenu.Delete()
 trayMenu.Add("Settings", (*) => GUI_ShowSettings())
 trayMenu.Add()
 trayMenu.Add("Reload", (*) => Reload())
-trayMenu.Add("Exit", (*) => ExitApp())
+trayMenu.Add("Exit", (*) => AppExit())
 trayMenu.Default := "Settings"
 
 ; ==============================================================================
@@ -117,15 +117,17 @@ global DU_NonDragAction := IniRead(ConfigFile, "DraggingUtility_Settings", "NonD
 global DU_IsDragging := false
 
 ; Set up drag state detection hook
+global DU_hWinEventHook := 0
+global DU_hWinEventCallback := 0
 DU_SetupDragHook()
 
 DU_SetupDragHook() {
     static EVENT_SYSTEM_MOVESIZESTART := 0x000A
     static EVENT_SYSTEM_MOVESIZEEND := 0x000B
 
-    callback := CallbackCreate(DU_DragStateCallback, "F", 7)
-    DllCall("SetWinEventHook", "UInt", EVENT_SYSTEM_MOVESIZESTART, "UInt", EVENT_SYSTEM_MOVESIZEEND,
-        "Ptr", 0, "Ptr", callback, "UInt", 0, "UInt", 0, "UInt", 0x0)
+    global DU_hWinEventCallback := CallbackCreate(DU_DragStateCallback, "F", 7)
+    global DU_hWinEventHook := DllCall("SetWinEventHook", "UInt", EVENT_SYSTEM_MOVESIZESTART, "UInt", EVENT_SYSTEM_MOVESIZEEND,
+        "Ptr", 0, "Ptr", DU_hWinEventCallback, "UInt", 0, "UInt", 0, "UInt", 0x0, "Ptr")
 }
 
 DU_DragStateCallback(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime) {
@@ -234,7 +236,7 @@ global STS_blockLeftClick := StrLower(IniRead(ConfigFile, "Trackball_Behavior", 
 ; Create mouse hook
 global STS_hHook := DllCall("SetWindowsHookEx", "int", 14, "ptr", CallbackCreate(STS_MouseHook, "Fast"), "ptr", 0, "uint", 0, "ptr")
 
-OnExit STS_RemoveMouseHook
+OnExit AppCleanup
 
 ; ==============================================================================
 ; SMOOTH TRACKBALL SCROLLING - APP INITIALIZATION
@@ -946,7 +948,7 @@ GUI_Quit() {
         }
         GUI_MainWindow := ""
     }
-    ExitApp()
+    AppExit()
 }
 
 ; --- Subclass for GroupBox controls: custom border + text painting ---
@@ -1831,10 +1833,39 @@ STS_MouseHook(nCode, wParam, lParam) {
     return DllCall("CallNextHookEx", "ptr", 0, "int", nCode, "ptr", wParam, "ptr", lParam)
 }
 
-STS_RemoveMouseHook(ExitReason, ExitCode) {
+STS_RemoveMouseHook() {
     STS_SetSystemCursor("")
     if (STS_hHook)
         DllCall("UnhookWindowsHookEx", "ptr", STS_hHook)
+}
+
+; ==============================================================================
+; APP CLEANUP - Unified exit handler
+; ==============================================================================
+AppCleanup(ExitReason, ExitCode) {
+    ; Disable any active timers first
+    SetTimer(STS_TimerScroll, 0)
+    SetTimer(STS_TimerWheel, 0)
+
+    ; Clean up SmoothTrackball mouse hook
+    STS_RemoveMouseHook()
+
+    ; Clean up DraggingUtility WinEventHook
+    if (DU_hWinEventHook)
+        DllCall("UnhookWinEvent", "Ptr", DU_hWinEventHook)
+
+    ; Destroy GUI if it exists
+    global GUI_MainWindow
+    if (GUI_MainWindow != "") {
+        try {
+            GUI_MainWindow.Destroy()
+        }
+        GUI_MainWindow := ""
+    }
+}
+
+AppExit() {
+    ExitApp()
 }
 
 ; ==============================================================================
@@ -2065,7 +2096,7 @@ STS_SetSystemCursor(CursorId := "") {
 
 ; PANIC FUNCTION
 STS_PanicFunction(_) {
-    ExitApp()
+    AppExit()
 }
 
 ; STOP FUNCTION
