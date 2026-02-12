@@ -72,10 +72,14 @@ try {
     global UR_Apps := IniRead(ConfigFile, "UndoRedo_Settings", "Apps", "")
     global UR_ModifierPassthrough := IniRead(ConfigFile, "UndoRedo_Settings", "ModifierPassthrough", "")
     global UR_AlternativeRedoShortcut := IniRead(ConfigFile, "UndoRedo_Settings", "AlternativeRedoShortcut", "")
+    global UR_AdditionalUndoKey := IniRead(ConfigFile, "UndoRedo_Settings", "AdditionalUndoKey", "")
+    global UR_AdditionalRedoKey := IniRead(ConfigFile, "UndoRedo_Settings", "AdditionalRedoKey", "")
 } catch as err {
     global UR_Apps := ""
     global UR_ModifierPassthrough := ""
     global UR_AlternativeRedoShortcut := ""
+    global UR_AdditionalUndoKey := ""
+    global UR_AdditionalRedoKey := ""
 }
 
 ; ==============================================================================
@@ -275,6 +279,22 @@ if (UR_Apps != "" && UR_StandaloneRedo) {
     }
 }
 
+; Register additional undo/redo keys (e.g., Browser_Back/Browser_Forward)
+if (UR_Apps != "" && UR_AdditionalUndoKey != "") {
+    try {
+        Hotkey("$" UR_AdditionalUndoKey, UR_AdditionalUndoHandler)
+    } catch as err {
+        MsgBox("UndoRedo: Failed to register additional undo hotkey '" UR_AdditionalUndoKey "': " err.Message)
+    }
+}
+if (UR_Apps != "" && UR_AdditionalRedoKey != "") {
+    try {
+        Hotkey("$" UR_AdditionalRedoKey, UR_AdditionalRedoHandler)
+    } catch as err {
+        MsgBox("UndoRedo: Failed to register additional redo hotkey '" UR_AdditionalRedoKey "': " err.Message)
+    }
+}
+
 ; ==============================================================================
 ; CAPSLOCK SHIFT - HOTKEY REGISTRATION
 ; ==============================================================================
@@ -431,6 +451,8 @@ SC_CreateDefaultConfig() {
     IniWrite("", ConfigFile, "UndoRedo_Settings", "Apps")
     IniWrite("", ConfigFile, "UndoRedo_Settings", "ModifierPassthrough")
     IniWrite("", ConfigFile, "UndoRedo_Settings", "AlternativeRedoShortcut")
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "AdditionalUndoKey")
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "AdditionalRedoKey")
 
     IniWrite("^F12", ConfigFile, "DraggingUtility_Settings", "TriggerKey")
     IniWrite("MButton", ConfigFile, "DraggingUtility_Settings", "DragAction")
@@ -467,6 +489,8 @@ SC_CreateDefaultConfig() {
     IniWrite("", ConfigFile, "UndoRedo_Settings", "Apps")
     IniWrite("", ConfigFile, "UndoRedo_Settings", "ModifierPassthrough")
     IniWrite("", ConfigFile, "UndoRedo_Settings", "AlternativeRedoShortcut")
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "AdditionalUndoKey")
+    IniWrite("", ConfigFile, "UndoRedo_Settings", "AdditionalRedoKey")
 
     IniWrite("0", ConfigFile, "CapsLockShift_Settings", "Enabled")
 
@@ -565,6 +589,25 @@ UR_RedoHandler(ThisHotkey) {
             Send("^y")
     } else
         Send("{XButton2}")
+}
+
+UR_AdditionalUndoHandler(ThisHotkey) {
+    global UR_AdditionalUndoKey
+    if (UR_Apps != "" && UR_IsAppActive())
+        Send("^z")
+    else
+        Send("{" UR_AdditionalUndoKey "}")
+}
+
+UR_AdditionalRedoHandler(ThisHotkey) {
+    global UR_Apps, UR_AdditionalRedoKey
+    if (UR_Apps != "" && UR_IsAppActive()) {
+        if (UR_UsesAlternativeRedo())
+            Send("^+{z}")
+        else
+            Send("^y")
+    } else
+        Send("{" UR_AdditionalRedoKey "}")
 }
 
 ; ==============================================================================
