@@ -280,16 +280,19 @@ if (UR_Apps != "" && UR_StandaloneRedo) {
 }
 
 ; Register additional undo/redo keys (e.g., Browser_Back/Browser_Forward)
+; Use *$ to catch regardless of modifier state (some devices send unusual modifier combinations)
 if (UR_Apps != "" && UR_AdditionalUndoKey != "") {
+    UR_AdditionalUndoKey := Trim(UR_AdditionalUndoKey)
     try {
-        Hotkey("$" UR_AdditionalUndoKey, UR_AdditionalUndoHandler)
+        Hotkey("*$" UR_AdditionalUndoKey, UR_AdditionalUndoHandler)
     } catch as err {
         MsgBox("UndoRedo: Failed to register additional undo hotkey '" UR_AdditionalUndoKey "': " err.Message)
     }
 }
 if (UR_Apps != "" && UR_AdditionalRedoKey != "") {
+    UR_AdditionalRedoKey := Trim(UR_AdditionalRedoKey)
     try {
-        Hotkey("$" UR_AdditionalRedoKey, UR_AdditionalRedoHandler)
+        Hotkey("*$" UR_AdditionalRedoKey, UR_AdditionalRedoHandler)
     } catch as err {
         MsgBox("UndoRedo: Failed to register additional redo hotkey '" UR_AdditionalRedoKey "': " err.Message)
     }
@@ -593,15 +596,15 @@ UR_RedoHandler(ThisHotkey) {
 
 UR_AdditionalUndoHandler(ThisHotkey) {
     global UR_AdditionalUndoKey
-    if (UR_Apps != "" && UR_IsAppActive())
+    if (UR_IsAppActive())
         Send("^z")
     else
         Send("{" UR_AdditionalUndoKey "}")
 }
 
 UR_AdditionalRedoHandler(ThisHotkey) {
-    global UR_Apps, UR_AdditionalRedoKey
-    if (UR_Apps != "" && UR_IsAppActive()) {
+    global UR_AdditionalRedoKey
+    if (UR_IsAppActive()) {
         if (UR_UsesAlternativeRedo())
             Send("^+{z}")
         else
